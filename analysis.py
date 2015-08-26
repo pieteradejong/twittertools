@@ -23,14 +23,16 @@ for t in search:
 
 print "Getting all followers' user names\n"
 followers = api.GetFollowers()
-for fol in followers:
-  print fol.screen_name
+print [f.name for f in followers]
 print "(DONE) Getting all followers' user names\n\n\n"
+
 
 print "Getting all followees' user names\n"
 friends = api.GetFriends()
-for friend in friends:
-  print friend.screen_name
+print [f.name for f in friends]
 print "(DONE) Getting all followees' user names\n\n\n"
 
-
+followers_set = set(followers)
+followees_set = set(followees)
+not_following_me_back = [x for x in followees if x not in followers_set]
+Im_not_following_back = [x for x in followers if x not in followees_set]
