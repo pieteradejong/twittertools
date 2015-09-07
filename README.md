@@ -1,7 +1,7 @@
 # twittertools
-fun and useful tools for a product i love
+**fun and useful tools for a product i love**
 
-This project will:
+##This project will:
 - show who is not following me back
 - show who I am not following back
 
