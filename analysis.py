@@ -11,9 +11,9 @@ api = twitter.Api(
 # Friends = who am I following
 # Followers = who is following me
 
-print "Verifying Twitter API Credentials.."
-print api.VerifyCredentials()
-print "(DONE) Twitter API Credentials Verified"
+# print "Verifying Twitter API Credentials.."
+# print api.VerifyCredentials()
+# print "(DONE) Twitter API Credentials Verified"
 
 # this was just for testing, we don't need it now
 # search = api.GetSearch(term='technology', lang='en', result_type='recent', count=100, max_id='')
@@ -44,12 +44,12 @@ print "(DONE) Twitter API Credentials Verified"
 print "Getting all friends' user names\n"
 friends = api.GetFriends()
 with open("friends2.txt", "w") as text_file:
-  for f in followers:
+  for f in friends:
     text_file.write(f.name.encode('utf8'))
     text_file.write("\t")
     text_file.write(f.screen_name.encode('utf8'))
     text_file.write("\n")
-    print f.name, "\t", f.screen_name
+    print f.name, "\t\t", f.screen_name
 print "(DONE) Getting all friends' user names\n\n\n"
 
 # followers_set = set(followers)
