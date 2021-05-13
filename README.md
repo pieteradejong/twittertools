@@ -1,6 +1,10 @@
 # twittertools
 **fun and useful tools for a product i love**
 
+## TODO list:
+* fetch all my own tweets with either zero likes, zero replies, or zero RTs
+
+
 ##This project will:
 - show who is not following me back
 - show who I am not following back
@@ -11,3 +15,12 @@
 ## Some definitions:
 - Friends = who am I following
 - Followers = who is following me
+
+## Other features:
+- reply ranking
+- for user: ratio replies/original
+- for user: how often replies to replies?
+- given tweet, find all instances of quoted tweet
+
+
+- brief into qustionairre to get you started

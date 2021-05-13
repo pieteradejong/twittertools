@@ -1,19 +1,20 @@
-import twitter
-import env
+from twitter import Twitter, OAuth
+import os
 
-api = twitter.Api(
- consumer_key=env.config['consumer_key'],
- consumer_secret=env.config['consumer_secret'],
- access_token_key=env.config['access_token_key'],
- access_token_secret=env.config['access_token_secret']
- )
+t = Twitter(auth=OAuth(
+  os.getenv('TWITTER_ACCESS_TOKEN', ""),
+  os.getenv('TWITTER_ACCESS_SECRET', ""),
+  os.getenv('TWITTER_CONSUMER_KEY', ""),
+  os.getenv('TWITTER_CONSUMER_SECRET', "")
+  ))
 
-# Friends = who am I following
-# Followers = who is following me
+# print "Verifying Twitter API Credentials.."
+# print api.VerifyCredentials()
+# print "(DONE) Twitter API Credentials Verified"
 
-print "Verifying Twitter API Credentials.."
-print api.VerifyCredentials()
-print "(DONE) Twitter API Credentials Verified"
+my_tweets_json = t.statuses.user_timeline(screen_name="pieteradejong")
+
+print(my_tweets_json)
 
 # this was just for testing, we don't need it now
 # search = api.GetSearch(term='technology', lang='en', result_type='recent', count=100, max_id='')
