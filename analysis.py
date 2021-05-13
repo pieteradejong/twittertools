@@ -8,6 +8,19 @@ t = Twitter(auth=OAuth(
   os.getenv('TWITTER_CONSUMER_SECRET', "")
   ))
 
+import twitter
+import env
+
+api = twitter.Api(
+ consumer_key=env.config['consumer_key'],
+ consumer_secret=env.config['consumer_secret'],
+ access_token_key=env.config['access_token_key'],
+ access_token_secret=env.config['access_token_secret']
+ )
+
+# Friends = who am I following
+# Followers = who is following me
+
 # print "Verifying Twitter API Credentials.."
 # print api.VerifyCredentials()
 # print "(DONE) Twitter API Credentials Verified"
@@ -45,12 +58,12 @@ print(my_tweets_json)
 print "Getting all friends' user names\n"
 friends = api.GetFriends()
 with open("friends2.txt", "w") as text_file:
-  for f in followers:
+  for f in friends:
     text_file.write(f.name.encode('utf8'))
     text_file.write("\t")
     text_file.write(f.screen_name.encode('utf8'))
     text_file.write("\n")
-    print f.name, "\t", f.screen_name
+    print f.name, "\t\t", f.screen_name
 print "(DONE) Getting all friends' user names\n\n\n"
 
 # followers_set = set(followers)
