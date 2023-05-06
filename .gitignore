@@ -1,5 +1,5 @@
 # Custom:
-env.py
+private.py
 *.json
 
 # Byte-compiled / optimized / DLL files
