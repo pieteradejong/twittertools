@@ -1,25 +1,43 @@
-from twitter import Twitter, OAuth
-import os
+import logging
+import private
+import requests
+import json
 
-t = Twitter(auth=OAuth(
-  os.getenv('TWITTER_ACCESS_TOKEN', ""),
-  os.getenv('TWITTER_ACCESS_SECRET', ""),
-  os.getenv('TWITTER_CONSUMER_KEY', ""),
-  os.getenv('TWITTER_CONSUMER_SECRET', "")
-  ))
+logger = logging.getLogger()
 
-import twitter
-import env
+API_BASE_URL = f"https://api.twitter.com/2/"
 
-api = twitter.Api(
- consumer_key=env.config['consumer_key'],
- consumer_secret=env.config['consumer_secret'],
- access_token_key=env.config['access_token_key'],
- access_token_secret=env.config['access_token_secret']
- )
+def create_headers():
+    headers = {"Authorization": f"Bearer {private.Bearer_Token}"}
+    return headers
 
-# Friends = who am I following
-# Followers = who is following me
+def create_url():
+  example_url = f"https://api.twitter.com/2/tweets/search/recent?query=from:twitterdev"
+  return example_url
+
+def connect_to_endpoint(url, headers, params = {}, next_token = None):
+    params['next_token'] = next_token   #params object received from create_url function
+    response = requests.request("GET", url, headers = headers, params = params)
+    print("Endpoint Response Code: " + str(response.status_code))
+    if response.status_code != 200:
+        print(response.json())
+        raise Exception(response.status_code, response.text)
+    return response.json()
+
+def main():
+    print(f"Starting Twitter analysis")
+    headers = create_headers()
+    print(f"header = {headers}")
+    url = create_url()
+    print(f"url = {url}")
+    json_response = connect_to_endpoint(url, headers)
+    print(json.dumps(json_response))
+
+
+if __name__ == "__main__":
+    main()
+
+"""
 
 # print "Verifying Twitter API Credentials.."
 # print api.VerifyCredentials()
@@ -111,3 +129,4 @@ def write_non_friends():
 
 
 
+"""
