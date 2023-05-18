@@ -1,21 +1,24 @@
 import private
 import requests
 
-API_BASE_URL = f"https://api.twitter.com/2"
+API_BASE_URL = "https://api.twitter.com/2"
 HTTP_HEADERS = {"Authorization": f"Bearer {private.Bearer_Token}"}
 
 def fetch_json(url, params = {}, next_token = None):
     params['next_token'] = next_token
-    response = requests.get(url = url, params = params, headers = HTTP_HEADERS)
+    response = requests.get(url = API_BASE_URL+url, params = params, headers = HTTP_HEADERS)
     if response.status_code != 200:
         raise Exception(response.status_code, response.text)
     return response.json()
 
-
 def api_proof_of_concept():
-    url = f"{API_BASE_URL}/tweets/search/recent?query=from:elonmusk"
-    json_response = fetch_json(url)
+    url = "/tweets/search/recent"
+    params = {"query": "from:elonmusk"}
+    json_response = fetch_json(url, params=params)
     return json_response
+
+def get_personal_lists():
+    url = f"GET /2/lists/:id"
 
 def main():
     print(f"Starting Twitter analysis\n\n")
