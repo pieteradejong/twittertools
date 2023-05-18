@@ -7,6 +7,7 @@
 * fetch all my own tweets with either zero likes, zero replies, or zero RTs 
 
 ## Ideas:
+* show who I blocked and when, plus reminders to potentially unblock
 * show who is not following me back
 * show who I am not following back
 
