@@ -11,12 +11,17 @@ def fetch_json(url, params = {}, next_token = None):
         raise Exception(response.status_code, response.text)
     return response.json()
 
+
+def api_proof_of_concept():
+    url = f"{API_BASE_URL}/tweets/search/recent?query=from:elonmusk"
+    json_response = fetch_json(url)
+    return json_response
+
 def main():
     print(f"Starting Twitter analysis\n\n")
     print(f"Starting with proof of concept:\n")
-    url = f"{API_BASE_URL}/tweets/search/recent?query=from:elonmusk"
-    response = fetch_json(url)
-    print(response)
+    resp_poc = api_proof_of_concept()
+    print(resp_poc)
 
 if __name__ == "__main__":
     main()
