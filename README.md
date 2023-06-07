@@ -1,12 +1,12 @@
 # Twitter Tools
 
 ## Goal: v0.1 Milestone
-* make successful Twitter API call
+* :white_check_mark: make successful Twitter API call
 
-## Todo list:
-* fetch all my own tweets with either zero likes, zero replies, or zero RTs 
+## Todos
+* :clock8: fetch own tweets with zero likes or zero replies or zero retweets
 
-## Ideas:
+## Ideas
 * show who I blocked and when, plus reminders to potentially unblock
 * show who is not following me back
 * show who I am not following back
