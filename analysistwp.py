@@ -2,9 +2,15 @@ import private
 import tweepy
 
 
-def get_followers(client: tweepy.Client, user_id: int) -> list:
+def get_user_follows(client: tweepy.Client, user_id: int) -> list:
+    pass
+
+def get_user_followers(client: tweepy.Client, user_id: int) -> list:
     response = client.get_users_followers(user_id, user_fields=["profile_image_url"])
     return response.data
+
+def get_follow_followed_overlap():
+    pass
 
 def get_user_tweets(client: tweepy.Client, user_id: int) -> list:
     response = client.get_users_tweets(user_id)
@@ -25,6 +31,9 @@ def main():
         print(tweet.id)
         print(tweet.text)
 
+    user_followers = get_user_followers(client, private.TWITTER_USER_ID)
+    for f in user_followers:
+        print(f)
 
 
 if __name__ == "__main__":
