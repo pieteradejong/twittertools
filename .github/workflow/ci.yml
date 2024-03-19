@@ -1,0 +1,45 @@
+name: Python CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+
+    - name: Create and activate virtual environment
+      run: |
+        python -m venv venv
+        source venv/bin/activate
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Check code formatting with black
+      run: |
+        source venv/bin/activate
+        black --check .
+
+    - name: Lint with ruff
+      run: |
+        source venv/bin/activate
+        ruff .
+
+    - name: Run pytest
+      run: |
+        source venv/bin/activate
+        pytest
