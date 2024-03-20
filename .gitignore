@@ -5,6 +5,16 @@ twitter-personal-archive/
 twitter-archive*.zip
 venv/
 
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# SQLite temporary and journal files
+*.db-journal
+*.db-shm
+*.db-wal
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
