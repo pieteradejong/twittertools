@@ -11,4 +11,3 @@
 
 # favorites = api.GetFavorites()
 # print [f for f in favorites]
-

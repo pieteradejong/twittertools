@@ -13,7 +13,7 @@
     * 3) when all done, insert added classifications to db
 * [PERHAPS] fetch own tweets with zero likes or zero replies or zero retweets
 
-## Functional requirements
+[DEPRECATED] ~~## Functional requirements~~
 * show who I blocked and when, plus reminders to potentially unblock
 * show who is not following me back
 * show who I am not following back
