@@ -2,3 +2,5 @@ black==23.3.0
 ruff==0.3.3
 pytest==7.2.0
 python-dotenv==1.0.1
+transformers==4.38.2
+torch==2.2.1
