@@ -1,5 +1,7 @@
 # Twitter(X) Tools
 
+[![python-baseapp](https://github.com/pieteradejong/twittertools/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pieteradejong/twittertools/actions/workflows/ci.yml)
+
 ## Goal: v0.1 Milestone
 ~~* :white_check_mark: make successful Twitter API call~~
 

@@ -45,7 +45,7 @@ def init():
     return conn
 
 
-def display_db(conn: sqlite3, database_path: str):
+def display_db(conn: sqlite3):
     # conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
 
@@ -66,8 +66,6 @@ def display_db(conn: sqlite3, database_path: str):
         cursor.execute(f"SELECT COUNT(*) FROM {table_name};")
         count = cursor.fetchone()[0]
         logging.info(f"Row count: {count}\n")
-
-    conn.close()
 
 
 def fetchTweets():
@@ -172,7 +170,7 @@ def main():
     print(f"Length of political tweets: {len(political)}")
     print("First 5 political tweets:", political[:5])
 
-    display_db(conn, "theme_classifications.db")
+    display_db(conn)
 
     conn.close()
     logging.info("Database connection closed.")
