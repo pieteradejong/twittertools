@@ -8,7 +8,7 @@
 ## Todos
 * [DONE] load all tweets from archive download
 * [DONE] use open source "`zero-shot-classification`" classifier to detect given themes
-* [WIP] save classifications to sqliteDB (they are expensive, deterministic, and I want to work with `sqlite`)
+* [DONE] save classifications to sqliteDB (they are expensive, deterministic, and I want to work with `sqlite`)
   * steps for performing an expensive operation like classification:
     * 1) before starting, load from db table all tweet_id's that already have a classification for the given topic
     * 2) classify all other tweets and append to in-memory list

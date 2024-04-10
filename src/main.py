@@ -7,17 +7,19 @@ from dotenv import load_dotenv
 import json
 from transformers import pipeline
 import sqlite3
-
+import time
 
 def init():
     load_dotenv()
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logging.info("Initializing applicaiton...")
     logging.info("Loaded environment variables")
+
+    
+    logging.info("Configured logging successfully.")
 
     conn = sqlite3.connect("theme_classifications.db")
     cursor = conn.cursor()
@@ -38,15 +40,21 @@ def init():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_theme ON scores (theme)")
 
     conn.commit()
-    # conn.close()
     logging.info(
         "Initialized SQLite database and created necessary table and index(es)."
     )
     return conn
 
+def terminate(conn: sqlite3.Connection) -> None:
+    """
+    Clean up resources and gracefully terminate the application.
+    """
+    if conn:
+        conn.close()
+        logging.info("Database connection closed.")
+    logging.info("Application terminated gracefully.")
 
 def display_db(conn: sqlite3):
-    # conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
 
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
@@ -118,50 +126,68 @@ def classify_topic(tweets: list):
 
 
 def get_tweets_for_theme(conn: sqlite3, tweets: list, theme: str) -> list:
-    # conn = sqlite3.connect('theme_classifications.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT tweet_id FROM scores WHERE theme = ?", (theme,))
-    existing_ids = set(row[0] for row in cursor.fetchall())
+    try:
+        cursor.execute("SELECT tweet_id FROM scores WHERE theme = ?", (theme,))
+    except sqlite3.Error as e:
+        logging.error(f"Database error: {e}")
+        return []
 
+    existing_ids = set(row[0] for row in cursor.fetchall())
+    logging.info(f"Number of existing IDs: {len(existing_ids)}")
     classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
     political_classified = []
     THRESHOLD = 0.7
-    for t in tweets[:100]:
+    
+    counter = 0
+    for t in tweets:
+        counter += 1
+        if counter % 100 == 0:
+            logging.info(f"Processed {counter} of {len(tweets)} tweets so far")
         full_text = t["tweet"].get("full_text", "")
-        if full_text and t["tweet"]["id"] not in existing_ids:
+        if full_text and t["tweet"]["id"] in existing_ids:
+            logging.info(f"Tweet with id {t['tweet']['id']} already classified for theme {theme}.")
+        elif full_text and t["tweet"]["id"] not in existing_ids:
+            start_time = time.time()
             classification = classifier(full_text, theme)
+            end_time = time.time()
+            logging.info(f'\033[94mClassification took {end_time - start_time} seconds.\033[0m')
             scores_by_theme = dict(
                 zip(classification["labels"], classification["scores"])
             )
-            if scores_by_theme.get(theme, 0) > THRESHOLD:
-                classified = {
-                    "tweet_id": t["tweet"]["id"],
-                    "tweet_full_text": full_text,
-                    "theme_measured": theme,
-                    "classification_score": scores_by_theme.get(theme, 0),
-                }
-                political_classified.append(classified)
+            print(f'scores_by_theme: {scores_by_theme}')
+            # if scores_by_theme.get(theme, 0) > THRESHOLD:
+            classified = {
+                "tweet_id": t["tweet"]["id"],
+                "tweet_full_text": full_text,
+                "theme_measured": theme,
+                "classification_score": scores_by_theme.get(theme, 0),
+            }
+            political_classified.append(classified)
 
-                cursor.execute(
-                    "INSERT INTO scores (tweet_id, full_text, theme, score) VALUES (?, ?, ?, ?)",
-                    (
-                        t["tweet"]["id_str"],
-                        full_text,
-                        theme,
-                        scores_by_theme.get(theme, 0),
-                    ),
-                )
+            cursor.execute(
+                "INSERT INTO scores (tweet_id, full_text, theme, score) VALUES (?, ?, ?, ?)",
+                (
+                    t["tweet"]["id_str"],
+                    full_text,
+                    theme,
+                    scores_by_theme.get(theme, 0),
+                ),
+            )
+            if cursor.rowcount == 1:
+                logging.info(f"Successfully inserted tweet_id: {t['tweet']['id_str']} into the database.")
+            else:
+                logging.warning(f"Failed to insert tweet_id: {t['tweet']['id_str']} into the database.")
 
     conn.commit()
-    # conn.close()
     return political_classified
 
 
 def main():
-    logging.info("Running application..")
+    logging.info("Initiating application..")
     conn = init()
     tweets = fetchTweets()
-    logging.info(f"\033[96mNumber of tweets: {len(tweets)}\033[0m")
+    print(f"Number of tweets: {len(tweets)}")
 
     # are_replies = filter_are_replies(tweets=tweets)
     # logging.info(f'\033[96mNumber of tweets that are replies: {len(are_replies)}\033[0m')
@@ -172,7 +198,7 @@ def main():
 
     display_db(conn)
 
-    conn.close()
+    terminate(conn)
     logging.info("Database connection closed.")
     logging.info("Finished running application..")
 
