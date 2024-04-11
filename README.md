@@ -13,7 +13,12 @@
     * 1) before starting, load from db table all tweet_id's that already have a classification for the given topic
     * 2) classify all other tweets and append to in-memory list
     * 3) when all done, insert added classifications to db
-* [PERHAPS] fetch own tweets with zero likes or zero replies or zero retweets
+* [TODO] fetch own tweets with zero likes or zero replies or zero retweets
+  * [TODO] tweet['favorite_count'] for "likes"
+  * [TODO] tweet['retweet_count'] for RT count
+* [TODO] create `dataclass Tweet`
+* [TODO] `classify_tweets` should take classifier as a parameter instead of hardcoded
+
 
 [DEPRECATED] ~~## Functional requirements~~
 * show who I blocked and when, plus reminders to potentially unblock

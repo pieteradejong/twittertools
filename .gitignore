@@ -4,6 +4,7 @@ private.py
 twitter-personal-archive/
 twitter-archive*.zip
 venv/
+logs/
 
 # SQLite databases
 *.db
