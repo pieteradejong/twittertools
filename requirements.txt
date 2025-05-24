@@ -1,6 +1,24 @@
+# Core dependencies
+tweepy>=4.14.0
+rich>=13.6.0
+python-dotenv>=1.0.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+sqlalchemy>=2.0.23
+pydantic>=2.4.2
+
+# Development tools
 black==23.3.0
 ruff==0.3.3
 pytest==7.2.0
-python-dotenv==1.0.1
-transformers==4.38.2
-torch==2.2.1
+
+# Optional: Classification features
+# transformers>=4.35.0  # Uncomment if using zero-shot classification
+# torch>=2.1.0         # Uncomment if using zero-shot classification
+
+# Optional: Additional features
+# numpy>=1.24.0        # Uncomment if needed for data analysis
+# pandas>=2.1.0        # Uncomment if needed for data analysis
+# python-multipart>=0.0.6  # Uncomment if implementing file uploads
+# aiofiles>=23.2.1     # Uncomment if implementing async file operations
+# httpx>=0.25.0        # Uncomment if implementing async HTTP requests
