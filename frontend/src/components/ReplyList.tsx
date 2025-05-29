@@ -15,18 +15,35 @@ async function fetchReplies() {
   return data;
 }
 
-export function ReplyList() {
-  const { data: replies, isLoading, error } = useQuery({
+interface ReplyListProps {
+  isActive: boolean;
+}
+
+export function ReplyList({ isActive }: ReplyListProps) {
+  const { data: replies, isLoading, error, refetch } = useQuery({
     queryKey: ['replies'],
     queryFn: fetchReplies,
+    // Only fetch when the tab is active
+    enabled: isActive,
+    // Cache for 5 minutes
+    staleTime: 5 * 60 * 1000,
+    // Don't refetch automatically
+    refetchOnWindowFocus: false,
+    refetchInterval: false,
   });
 
+  if (!isActive) return null;
   if (isLoading) return <Text>Loading replies...</Text>;
   if (error) return <Text c="red">Error loading replies</Text>;
   if (!replies?.length) return <Text>No replies with zero engagement found</Text>;
 
   return (
     <Stack gap="md">
+      <Group justify="flex-end">
+        <Button variant="light" size="sm" onClick={() => refetch()}>
+          Refresh Replies
+        </Button>
+      </Group>
       {replies.map((reply) => (
         <Card key={reply.id} withBorder padding="md">
           <Stack gap="xs">

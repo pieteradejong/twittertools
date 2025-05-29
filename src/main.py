@@ -14,12 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from rich.console import Console
 from rich.table import Table
+from src.settings import get_settings
+import time
 
-from src.config import twitter_config, app_config, create_env_template
-
-# Set up logging
+# Set up logging centrally
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO if get_settings().DEBUG else logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -31,10 +31,11 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# Configure CORS
+# Configure CORS using settings
+settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[app_config.frontend_url],
+    allow_origins=[settings.FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,6 +58,9 @@ class RateLimitInfo(BaseModel):
     reset_time: Optional[datetime] = None
     wait_seconds: Optional[int] = None
     endpoint: Optional[str] = None
+    limit: Optional[int] = None  # Total requests allowed
+    remaining: Optional[int] = None  # Requests remaining
+    window: Optional[str] = None  # Rate limit window (e.g., "15min", "1h")
 
 class AuthStatus(BaseModel):
     is_authenticated: bool
@@ -65,84 +69,135 @@ class AuthStatus(BaseModel):
     can_fetch_data: bool = False
     test_tweet_count: Optional[int] = None
     rate_limit: Optional[RateLimitInfo] = None
+    auth_steps: List[str] = []  # Track authentication steps
+    current_step: Optional[str] = None  # Current step being performed
 
 class TwitterClient:
     """Singleton class to manage Twitter API client."""
     
     _instance = None
-    _client = None
+    _user_client = None  # OAuth 1.0a User Context client
+    _app_client = None   # App-level Bearer Token client
     _rate_limit_info = None
+    _rate_limits = {}  # Track rate limits per endpoint
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(TwitterClient, cls).__new__(cls)
-            cls._instance._initialize_client()
+            cls._instance._initialize_clients()
         return cls._instance
+    
+    def _update_rate_limit_info(self, response, endpoint: str) -> None:
+        """Update rate limit information from response headers."""
+        try:
+            limit = int(response.headers.get('x-rate-limit-limit', 0))
+            remaining = int(response.headers.get('x-rate-limit-remaining', 0))
+            reset_timestamp = int(response.headers.get('x-rate-limit-reset', 0))
+            reset_time = datetime.fromtimestamp(reset_timestamp)
+            wait_seconds = int((reset_time - datetime.now()).total_seconds())
+            
+            # Determine rate limit window (15min or 1h)
+            window = "15min" if limit <= 450 else "1h"  # Twitter's typical limits
+            
+            self._rate_limits[endpoint] = RateLimitInfo(
+                is_rate_limited=remaining == 0,
+                reset_time=reset_time,
+                wait_seconds=wait_seconds if remaining == 0 else 0,
+                endpoint=endpoint,
+                limit=limit,
+                remaining=remaining,
+                window=window
+            )
+            
+            # Log rate limit status
+            if remaining < limit * 0.2:  # Less than 20% remaining
+                logger.warning(
+                    f"Rate limit for {endpoint} ({window}): "
+                    f"{remaining}/{limit} requests remaining. "
+                    f"Resets at {reset_time.strftime('%H:%M:%S')}"
+                )
+            
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Could not parse rate limit headers for {endpoint}: {e}")
     
     def _handle_rate_limit(self, e: tweepy.TooManyRequests) -> None:
         """Handle rate limit exceeded error."""
-        reset_time = datetime.fromtimestamp(e.response.headers.get('x-rate-limit-reset', 0))
-        wait_seconds = int((reset_time - datetime.now()).total_seconds())
-        endpoint = e.response.url.split('/')[-1]  # Get the endpoint that was rate limited
+        endpoint = e.response.url.split('/')[-1]
+        self._update_rate_limit_info(e.response, endpoint)
+        self._rate_limit_info = self._rate_limits.get(endpoint)
         
-        self._rate_limit_info = RateLimitInfo(
-            is_rate_limited=True,
-            reset_time=reset_time,
-            wait_seconds=wait_seconds,
-            endpoint=endpoint
+        logger.warning(
+            f"Rate limit exceeded for {endpoint}. "
+            f"Reset at {self._rate_limit_info.reset_time}. "
+            f"Waiting {self._rate_limit_info.wait_seconds} seconds."
         )
-        
-        logger.warning(f"Rate limit exceeded for {endpoint}. Reset at {reset_time}. Waiting {wait_seconds} seconds.")
     
     def _clear_rate_limit(self) -> None:
         """Clear rate limit information."""
         self._rate_limit_info = None
+        self._rate_limits.clear()
     
-    def _initialize_client(self):
-        """Initialize the Twitter client with credentials."""
-        if not twitter_config.validate_credentials():
-            create_env_template()
-            raise ValueError("Twitter credentials not found. Please check your .env file.")
-        
+    @property
+    def rate_limits(self) -> Dict[str, RateLimitInfo]:
+        """Get all current rate limit information."""
+        return self._rate_limits
+    
+    def get_rate_limit(self, endpoint: str) -> Optional[RateLimitInfo]:
+        """Get rate limit information for a specific endpoint."""
+        return self._rate_limits.get(endpoint)
+    
+    def _make_request(self, client: tweepy.Client, endpoint: str, *args, **kwargs) -> Any:
+        """Make an API request with rate limit tracking."""
         try:
-            # First try with just the bearer token
-            logger.info("Testing authentication with Bearer Token only...")
-            bearer_client = tweepy.Client(
-                bearer_token=twitter_config.get_bearer_token(),
-                wait_on_rate_limit=True,  # Enable built-in rate limit handling
-                return_type=dict  # Return dictionaries instead of objects for better control
+            # Check if we're already rate limited
+            rate_limit = self.get_rate_limit(endpoint)
+            if rate_limit and rate_limit.is_rate_limited:
+                if rate_limit.wait_seconds > 0:
+                    logger.info(f"Waiting {rate_limit.wait_seconds} seconds for {endpoint} rate limit to reset...")
+                    time.sleep(rate_limit.wait_seconds)
+            
+            # Make the request
+            response = client._make_request(*args, **kwargs)
+            
+            # Update rate limit info from response
+            self._update_rate_limit_info(response, endpoint)
+            
+            return response
+            
+        except tweepy.TooManyRequests as e:
+            self._handle_rate_limit(e)
+            raise
+        except tweepy.TweepyException as e:
+            logger.error(f"Twitter API error for {endpoint}: {str(e)}")
+            raise
+
+    def _initialize_clients(self):
+        """Initialize both User Context and App-level Twitter clients."""
+        settings = get_settings()
+        try:
+            # Initialize User Context client (OAuth 1.0a)
+            logger.info("Initializing Twitter User Context client (OAuth 1.0a)...")
+            self._user_client = tweepy.Client(
+                consumer_key=settings.TWITTER_API_KEY,
+                consumer_secret=settings.TWITTER_API_SECRET,
+                access_token=settings.TWITTER_ACCESS_TOKEN,
+                access_token_secret=settings.TWITTER_ACCESS_TOKEN_SECRET,
+                return_type=dict
             )
             
-            # Test bearer token
-            try:
-                test_tweet = bearer_client.get_tweet(123456789)  # This will fail but we just want to test auth
-            except tweepy.NotFound:
-                logger.info("Bearer Token authentication successful!")
-            except tweepy.TooManyRequests as e:
-                self._handle_rate_limit(e)
-                raise
-            except tweepy.Unauthorized as e:
-                logger.error("Bearer Token authentication failed!")
-                logger.error("Please verify your Bearer Token in the Twitter Developer Portal")
-                raise
+            # Initialize App-level client (Bearer Token)
+            if settings.TWITTER_BEARER_TOKEN:
+                logger.info("Initializing Twitter App-level client (Bearer Token)...")
+                self._app_client = tweepy.Client(
+                    bearer_token=settings.TWITTER_BEARER_TOKEN,
+                    return_type=dict
+                )
             
-            # Now try with full OAuth
-            logger.info("Testing full OAuth authentication...")
-            self._client = tweepy.Client(
-                bearer_token=twitter_config.get_bearer_token(),
-                consumer_key=twitter_config.get_api_key(),
-                consumer_secret=twitter_config.get_api_secret(),
-                access_token=twitter_config.get_access_token(),
-                access_token_secret=twitter_config.get_access_token_secret(),
-                wait_on_rate_limit=True,  # Enable built-in rate limit handling
-                return_type=dict  # Return dictionaries instead of objects for better control
-            )
-            
-            # Test OAuth by getting user info
+            # Test User Context authentication
             try:
-                me = self._client.get_me()
-                logger.info(f"OAuth authentication successful! Authenticated as: @{me['data']['username']}")
-                self._clear_rate_limit()  # Clear any rate limit info on successful auth
+                me = self._user_client.get_me()
+                logger.info(f"OAuth 1.0a authentication successful! Authenticated as: @{me['data']['username']}")
+                self._clear_rate_limit()
             except tweepy.TooManyRequests as e:
                 self._handle_rate_limit(e)
                 raise
@@ -152,7 +207,7 @@ class TwitterClient:
             logger.error("1. Make sure your API keys and tokens are correct")
             logger.error("2. Verify that your Twitter Developer account is active")
             logger.error("3. Check if your app has the required permissions")
-            logger.error("4. Verify your app's OAuth 2.0 settings in the Developer Portal")
+            logger.error("4. Verify your app's OAuth 1.0a settings in the Developer Portal")
             logger.error(f"Error details: {str(e)}")
             raise
         except tweepy.TweepyException as e:
@@ -166,10 +221,27 @@ class TwitterClient:
 
     @property
     def client(self) -> tweepy.Client:
-        """Get the Twitter client instance."""
-        if not self._client:
-            self._initialize_client()
-        return self._client
+        """Get the User Context client instance."""
+        if not self._user_client:
+            self._initialize_clients()
+        return self._user_client
+
+    @property
+    def app_client(self) -> Optional[tweepy.Client]:
+        """Get the App-level client instance if available."""
+        if not self._app_client and get_settings().TWITTER_BEARER_TOKEN:
+            self._initialize_clients()
+        return self._app_client
+
+    def get_tweet(self, tweet_id: str, use_app_auth: bool = True) -> dict:
+        """Get a tweet using either App-level or User Context authentication."""
+        client = self.app_client if use_app_auth and self.app_client else self.client
+        return self._make_request(client, "tweets", "GET", f"/2/tweets/{tweet_id}")
+
+    def get_users_tweets(self, user_id: str, use_app_auth: bool = True, **kwargs) -> dict:
+        """Get user tweets using either App-level or User Context authentication."""
+        client = self.app_client if use_app_auth and self.app_client else self.client
+        return self._make_request(client, "users/:id/tweets", "GET", f"/2/users/{user_id}/tweets", **kwargs)
 
 # Dependency for FastAPI endpoints
 def get_twitter_client() -> TwitterClient:
@@ -182,18 +254,18 @@ class TwitterService:
     def __init__(self, client: Optional[TwitterClient] = None):
         if client is None:
             client = TwitterClient()
-        self.client = client.client
+        self.client = client
         self.console = Console()
     
     def get_recent_likes(self, count: int = 10) -> List[Dict[str, Any]]:
         """Fetch recent likes for the authenticated user."""
         try:
-            # Get user ID for the authenticated user
-            me = self.client.get_me()
-            user_id = me.data.id
+            # Get user ID for the authenticated user (requires User Context)
+            me = self.client.client.get_me()
+            user_id = me['data']['id']
             
-            # Get recent likes
-            likes = self.client.get_liked_tweets(
+            # Get recent likes (requires User Context)
+            likes = self.client.client.get_liked_tweets(
                 user_id,
                 max_results=count,
                 tweet_fields=['created_at', 'public_metrics', 'text']
@@ -263,7 +335,7 @@ async def health_check():
 async def get_me(service: TwitterService = Depends(get_twitter_service)):
     """Get authenticated user info."""
     try:
-        me = service.client.get_me()
+        me = service.client.client.get_me()
         return UserInfo(
             username=me.data.username,
             id=me.data.id,
@@ -287,16 +359,17 @@ async def get_zero_engagement_tweets(
 ):
     """Get tweets with zero engagement."""
     try:
-        # Get user ID for the authenticated user
-        me = service.client.get_me()
-        user_id = me.data.id
+        # Get user ID for the authenticated user (requires User Context)
+        me = service.client.client.get_me()
+        user_id = me['data']['id']
         
-        # Get user's tweets
+        # Get user's tweets (can use App-level auth)
         tweets = service.client.get_users_tweets(
             user_id,
-            max_results=100,  # Adjust as needed
+            max_results=100,
             tweet_fields=['created_at', 'public_metrics', 'text', 'in_reply_to_user_id'],
-            exclude=['retweets', 'replies']  # Only get original tweets
+            exclude=['retweets', 'replies'],
+            use_app_auth=True  # Use App-level auth when possible
         )
         
         if not tweets.data:
@@ -306,7 +379,6 @@ async def get_zero_engagement_tweets(
         zero_engagement_tweets = []
         for tweet in tweets.data:
             metrics = tweet.public_metrics
-            # Consider a tweet to have zero engagement if it has no likes, retweets, or replies
             if metrics['like_count'] == 0 and metrics['retweet_count'] == 0 and metrics['reply_count'] == 0:
                 zero_engagement_tweets.append({
                     'id': str(tweet.id),
@@ -328,8 +400,8 @@ async def get_zero_engagement_replies(
     """Get replies with zero engagement."""
     try:
         # Get user ID for the authenticated user
-        me = service.client.get_me()
-        user_id = me.data.id
+        me = service.client.client.get_me()
+        user_id = me['data']['id']
         
         # Get user's replies
         replies = service.client.get_users_tweets(
@@ -383,6 +455,9 @@ async def test_authentication(
     service: TwitterService = Depends(get_twitter_service)
 ):
     """Test Twitter API authentication and data fetching capabilities."""
+    auth_steps = []
+    current_step = "Initializing authentication test..."
+    
     try:
         # Get rate limit info if any
         rate_limit = service.client.rate_limit_info
@@ -392,51 +467,74 @@ async def test_authentication(
             return AuthStatus(
                 is_authenticated=True,  # We might still be authenticated
                 rate_limit=rate_limit,
-                error=f"Rate limited on {rate_limit.endpoint}. Reset in {rate_limit.wait_seconds} seconds."
+                error=f"Rate limited on {rate_limit.endpoint}. Reset in {rate_limit.wait_seconds} seconds.",
+                auth_steps=auth_steps,
+                current_step="Rate limited"
             )
         
-        # Test authentication by getting user info
-        me = service.client.get_me()
-        username = me['data']['username']
-        
-        # Test data fetching by getting a single tweet
+        # Test OAuth 1.0a authentication
+        current_step = "Testing OAuth 1.0a authentication..."
         try:
-            tweets = service.client.get_users_tweets(
-                me['data']['id'],
-                max_results=1,
-                tweet_fields=['created_at', 'public_metrics', 'text']
-            )
+            me = service.client.client.get_me()
+            username = me['data']['username']
+            auth_steps.append(f"OAuth 1.0a authentication successful as @{username}")
             
-            return AuthStatus(
-                is_authenticated=True,
-                username=username,
-                can_fetch_data=True,
-                test_tweet_count=len(tweets['data']) if tweets.get('data') else 0,
-                rate_limit=service.client.rate_limit_info
-            )
+            # Test data fetching capability
+            current_step = "Testing data fetching capability..."
+            try:
+                tweets = service.client.get_users_tweets(
+                    me['data']['id'],
+                    max_results=5,  # Minimum valid value
+                    tweet_fields=['created_at', 'public_metrics', 'text']
+                )
+                auth_steps.append("Data fetching test successful")
+                
+                return AuthStatus(
+                    is_authenticated=True,
+                    username=username,
+                    can_fetch_data=True,
+                    test_tweet_count=len(tweets['data']) if tweets.get('data') else 0,
+                    rate_limit=service.client.rate_limit_info,
+                    auth_steps=auth_steps,
+                    current_step="All authentication tests passed"
+                )
+            except tweepy.TooManyRequests as e:
+                service.client.client._handle_rate_limit(e)
+                return AuthStatus(
+                    is_authenticated=True,
+                    username=username,
+                    rate_limit=service.client.rate_limit_info,
+                    error=f"Rate limited while testing data fetching. Reset in {service.client.rate_limit_info.wait_seconds} seconds.",
+                    auth_steps=auth_steps,
+                    current_step="Rate limited during data fetch test"
+                )
+            
         except tweepy.TooManyRequests as e:
-            service.client._handle_rate_limit(e)
+            service.client.client._handle_rate_limit(e)
             return AuthStatus(
                 is_authenticated=True,
-                username=username,
                 rate_limit=service.client.rate_limit_info,
-                error=f"Rate limited while fetching tweets. Reset in {service.client.rate_limit_info.wait_seconds} seconds."
+                error=f"Rate limited during OAuth test. Reset in {service.client.rate_limit_info.wait_seconds} seconds.",
+                auth_steps=auth_steps,
+                current_step="Rate limited during OAuth test"
+            )
+        except tweepy.Unauthorized:
+            return AuthStatus(
+                is_authenticated=False,
+                error="OAuth 1.0a authentication failed. Please check your OAuth credentials.",
+                auth_steps=auth_steps,
+                current_step="OAuth authentication failed"
             )
         
-    except tweepy.Unauthorized as e:
-        logger.error(f"Authentication test failed: {str(e)}")
-        return AuthStatus(
-            is_authenticated=False,
-            error="Authentication failed. Please check your Twitter API credentials.",
-            can_fetch_data=False
-        )
     except tweepy.Forbidden as e:
         logger.error(f"Permission test failed: {str(e)}")
         return AuthStatus(
             is_authenticated=True,
             username=username if 'username' in locals() else None,
             error="API permissions issue. Please check your app's permissions in the Twitter Developer Portal.",
-            can_fetch_data=False
+            can_fetch_data=False,
+            auth_steps=auth_steps,
+            current_step="Permission check failed"
         )
     except tweepy.TweepyException as e:
         logger.error(f"API test failed: {str(e)}")
@@ -444,7 +542,9 @@ async def test_authentication(
             is_authenticated=True,
             username=username if 'username' in locals() else None,
             error=f"API error: {str(e)}",
-            can_fetch_data=False
+            can_fetch_data=False,
+            auth_steps=auth_steps,
+            current_step="API error occurred"
         )
 
 # CLI functionality

@@ -4,10 +4,22 @@ import { TweetList } from './components/TweetList';
 import { ReplyList } from './components/ReplyList';
 import { AuthStatusComponent } from './components/AuthStatus';
 import '@mantine/core/styles.css';
+import { useState } from 'react';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Global settings for all queries
+      retry: false,
+      refetchOnWindowFocus: false,
+      refetchInterval: false,
+    },
+  },
+});
 
 function App() {
+  const [activeTab, setActiveTab] = useState<string | null>('tweets');
+
   return (
     <QueryClientProvider client={queryClient}>
       <MantineProvider>
@@ -20,18 +32,22 @@ function App() {
             <Container size="xl">
               <Stack gap="md">
                 <AuthStatusComponent />
-                <Tabs defaultValue="tweets">
+                <Tabs 
+                  value={activeTab} 
+                  onChange={setActiveTab}
+                  defaultValue="tweets"
+                >
                   <Tabs.List>
                     <Tabs.Tab value="tweets">Zero Engagement Tweets</Tabs.Tab>
                     <Tabs.Tab value="replies">Zero Engagement Replies</Tabs.Tab>
                   </Tabs.List>
 
                   <Tabs.Panel value="tweets" pt="md">
-                    <TweetList />
+                    <TweetList isActive={activeTab === 'tweets'} />
                   </Tabs.Panel>
 
                   <Tabs.Panel value="replies" pt="md">
-                    <ReplyList />
+                    <ReplyList isActive={activeTab === 'replies'} />
                   </Tabs.Panel>
                 </Tabs>
               </Stack>

@@ -17,6 +17,8 @@ interface AuthStatus {
   can_fetch_data: boolean;
   test_tweet_count: number | null;
   rate_limit: RateLimitInfo | null;
+  auth_steps: string[];
+  current_step: string | null;
 }
 
 async function fetchAuthStatus() {
@@ -30,14 +32,15 @@ export function AuthStatusComponent() {
     queryKey: ['auth-status'],
     queryFn: fetchAuthStatus,
     retry: false,
-    refetchInterval: (query) => {
+    // Increase stale time to 5 minutes to prevent unnecessary refetches
+    staleTime: 5 * 60 * 1000,
+    // Only refetch on window focus if we're not rate limited
+    refetchOnWindowFocus: (query) => {
       const data = query.state.data;
-      // If we're rate limited, refetch when the rate limit resets
-      if (data?.rate_limit?.wait_seconds) {
-        return data.rate_limit.wait_seconds * 1000;
-      }
-      return false;
+      return !data?.rate_limit?.is_rate_limited;
     },
+    // Remove automatic refetch interval
+    refetchInterval: false,
   });
 
   // Handle countdown for rate limit
@@ -65,7 +68,10 @@ export function AuthStatusComponent() {
   if (isLoading) {
     return (
       <Card withBorder padding="md">
-        <Text>Checking authentication status...</Text>
+        <Stack gap="xs">
+          <Text>Checking authentication status...</Text>
+          <Progress size="sm" animated value={100} />
+        </Stack>
       </Card>
     );
   }
@@ -115,6 +121,24 @@ export function AuthStatusComponent() {
             )}
           </Group>
         </Group>
+
+        {status.current_step && (
+          <Text size="sm" c="dimmed" style={{ fontStyle: 'italic' }}>
+            Current step: {status.current_step}
+          </Text>
+        )}
+
+        {status.auth_steps.length > 0 && (
+          <Stack gap="xs">
+            <Text size="sm" fw={500}>Authentication Steps:</Text>
+            {status.auth_steps.map((step, index) => (
+              <Group key={index} gap="xs">
+                <Badge size="sm" color="green" variant="light">✓</Badge>
+                <Text size="sm">{step}</Text>
+              </Group>
+            ))}
+          </Stack>
+        )}
 
         {status.username && (
           <Text size="sm">Connected as: @{status.username}</Text>

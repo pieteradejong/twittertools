@@ -1,4 +1,6 @@
 """
+DEPRECATED: This file is no longer used. All configuration is now managed in src/settings.py using Pydantic BaseSettings.
+
 Configuration management for Twitter Tools.
 
 Handles environment variables, Twitter API credentials, and application settings.

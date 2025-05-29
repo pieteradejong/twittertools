@@ -14,18 +14,35 @@ async function fetchTweets() {
   return data;
 }
 
-export function TweetList() {
-  const { data: tweets, isLoading, error } = useQuery({
+interface TweetListProps {
+  isActive: boolean;
+}
+
+export function TweetList({ isActive }: TweetListProps) {
+  const { data: tweets, isLoading, error, refetch } = useQuery({
     queryKey: ['tweets'],
     queryFn: fetchTweets,
+    // Only fetch when the tab is active
+    enabled: isActive,
+    // Cache for 5 minutes
+    staleTime: 5 * 60 * 1000,
+    // Don't refetch automatically
+    refetchOnWindowFocus: false,
+    refetchInterval: false,
   });
 
+  if (!isActive) return null;
   if (isLoading) return <Text>Loading tweets...</Text>;
   if (error) return <Text c="red">Error loading tweets</Text>;
   if (!tweets?.length) return <Text>No tweets with zero engagement found</Text>;
 
   return (
     <Stack gap="md">
+      <Group justify="flex-end">
+        <Button variant="light" size="sm" onClick={() => refetch()}>
+          Refresh Tweets
+        </Button>
+      </Group>
       {tweets.map((tweet) => (
         <Card key={tweet.id} withBorder padding="md">
           <Stack gap="xs">

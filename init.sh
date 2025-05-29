@@ -8,11 +8,33 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}Initializing Twitter Tools...${NC}"
 
-# Check if Python 3 is installed
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}Python 3 is required but not installed. Please install Python 3 first.${NC}"
+# Function to check Python version
+check_python_version() {
+    local version
+    version=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+    if [[ $(echo "$version 3.12" | awk '{print ($1 >= $2)}') -eq 0 ]]; then
+        echo -e "${RED}Python 3.12 is required, but found version $version${NC}"
+        echo -e "${YELLOW}Please install Python 3.12:${NC}"
+        echo "  - macOS: brew install python@3.12"
+        echo "  - Linux: Use your distribution's package manager"
+        echo "  - Windows: Download from python.org"
+        exit 1
+    fi
+    echo -e "${GREEN}Found Python $version${NC}"
+}
+
+# Check if Python 3.12 is installed and available
+if ! command -v python3.12 &> /dev/null; then
+    echo -e "${RED}Python 3.12 is required but not installed.${NC}"
+    echo -e "${YELLOW}Please install Python 3.12:${NC}"
+    echo "  - macOS: brew install python@3.12"
+    echo "  - Linux: Use your distribution's package manager"
+    echo "  - Windows: Download from python.org"
     exit 1
 fi
+
+# Verify Python version
+check_python_version
 
 # Check if Node.js and npm are installed
 if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
@@ -20,20 +42,53 @@ if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
     exit 1
 fi
 
+# Remove any existing env directory if it exists (we use venv)
+if [ -d "env" ]; then
+    echo -e "${YELLOW}Removing old env directory...${NC}"
+    rm -rf env
+    echo -e "${GREEN}Old env directory removed.${NC}"
+fi
+
 # Create virtual environment if it doesn't exist
-if [ ! -d "env" ]; then
-    echo -e "${YELLOW}Creating virtual environment...${NC}"
-    python3 -m venv env
+if [ ! -d "venv" ]; then
+    echo -e "${YELLOW}Creating virtual environment with Python 3.12...${NC}"
+    python3.12 -m venv venv
     echo -e "${GREEN}Virtual environment created.${NC}"
+else
+    echo -e "${YELLOW}Virtual environment already exists.${NC}"
+    echo -e "${YELLOW}Checking Python version in virtual environment...${NC}"
+    source venv/bin/activate
+    venv_version=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+    if [[ $(echo "$venv_version 3.12" | awk '{print ($1 >= $2)}') -eq 0 ]]; then
+        echo -e "${RED}Virtual environment is using Python $venv_version, but 3.12 is required${NC}"
+        echo -e "${YELLOW}Removing old virtual environment...${NC}"
+        deactivate
+        rm -rf venv
+        echo -e "${YELLOW}Creating new virtual environment with Python 3.12...${NC}"
+        python3.12 -m venv venv
+        echo -e "${GREEN}New virtual environment created.${NC}"
+    else
+        echo -e "${GREEN}Virtual environment is using Python $venv_version${NC}"
+    fi
 fi
 
 # Activate virtual environment
 echo -e "${YELLOW}Activating virtual environment...${NC}"
-source env/bin/activate
+source venv/bin/activate
+
+# Verify we're using the right Python version in the virtual environment
+venv_python_version=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+if [[ "$venv_python_version" != "3.12" ]]; then
+    echo -e "${RED}Error: Virtual environment is using Python $venv_python_version instead of 3.12${NC}"
+    echo -e "${YELLOW}Please remove the venv directory and run init.sh again:${NC}"
+    echo "    rm -rf venv"
+    echo "    ./init.sh"
+    exit 1
+fi
 
 # Install/upgrade pip and requirements
 echo -e "${YELLOW}Upgrading pip and installing requirements...${NC}"
-pip install --upgrade pip
+python -m pip install --upgrade pip
 if [ -f "requirements.txt" ]; then
     pip install -r requirements.txt
 else
@@ -79,7 +134,7 @@ fi
 echo -e "${GREEN}Initialization complete!${NC}"
 echo -e "${YELLOW}Next steps:${NC}"
 echo "1. Fill in your Twitter API credentials in the .env file"
-echo "2. Activate the virtual environment: source env/bin/activate"
+echo "2. Activate the virtual environment: source venv/bin/activate"
 echo "3. Start the development servers: ./run.sh"
 echo -e "\n${YELLOW}Project structure:${NC}"
 echo "├── src/              # Backend Python code"
@@ -87,3 +142,5 @@ echo "├── frontend/         # React frontend"
 echo "├── data/            # Local data storage"
 echo "├── .env             # Backend environment variables"
 echo "└── frontend/.env    # Frontend environment variables"
+echo -e "\n${YELLOW}Python version:${NC}"
+echo "Using Python 3.12 in virtual environment"
