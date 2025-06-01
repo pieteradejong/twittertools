@@ -1,0 +1,19 @@
+# Cursor Project Rules for twittertools
+
+Project goal: side project that fetches all of my twitter activity, e.g.tweets, replies etc.
+and then react vite frond end that allows me to perform certain actions e.g. delete tweets
+
+
+
+
+- Never store Twitter API secrets or tokens in plaintext or logs.
+- When caching authentication status, always use a secure hash (e.g., SHA-256) of credentials, never the secrets themselves.
+- TTL for authentication cache is infinite (no expiration) unless otherwise specified.
+- Prefer local caching (SQLite, JSON, etc.) for all Twitter data to minimize API calls.
+- Document all caching strategies and security considerations in the README.
+- Keep code modular: separate caching, API, and business logic.
+- Always prioritize user security and privacy.
+- If in doubt, ask for explicit user consent before storing any new type of data.
+- All new features should include a note in the README if they affect data storage or caching.
+- All new frontend UI must use Tailwind CSS and Headless UI (not Mantine).
+- The migration from Mantine to Tailwind CSS + Headless UI is complete. 

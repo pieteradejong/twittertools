@@ -96,11 +96,43 @@ else
     exit 1
 fi
 
-# Create .env file if it doesn't exist
-if [ ! -f ".env" ]; then
-    echo -e "${YELLOW}Creating .env template file...${NC}"
-    python3 -c "from config import create_env_template; create_env_template()"
-    echo -e "${GREEN}.env template created. Please fill in your Twitter API credentials.${NC}"
+# Load .env file if present, but do not overwrite existing env vars
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | xargs -d '\n')
+fi
+
+# Function to validate Twitter credentials from environment variables
+validate_twitter_credentials() {
+    echo -e "${YELLOW}Validating Twitter credentials from environment...${NC}"
+    required_vars=(
+        "TWITTER_API_KEY"
+        "TWITTER_API_SECRET"
+        "TWITTER_ACCESS_TOKEN"
+        "TWITTER_ACCESS_TOKEN_SECRET"
+        "TWITTER_BEARER_TOKEN"
+    )
+    missing_vars=()
+    for var in "${required_vars[@]}"; do
+        if [ -z "${!var}" ]; then
+            missing_vars+=("$var")
+        fi
+    done
+    if [ ${#missing_vars[@]} -ne 0 ]; then
+        echo -e "${RED}Error: Missing required Twitter credentials in environment or .env:${NC}"
+        for var in "${missing_vars[@]}"; do
+            echo -e "${RED}  - $var${NC}"
+        done
+        echo -e "\n${YELLOW}Please export these variables in your shell or add them to your .env file and source it.${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}Twitter credentials validated successfully from environment or .env${NC}"
+    return 0
+}
+
+# Validate Twitter credentials
+if ! validate_twitter_credentials; then
+    echo -e "${RED}Twitter credential validation failed. Please fix the issues above and run init.sh again${NC}"
+    exit 1
 fi
 
 # Create data directory for local storage

@@ -108,8 +108,12 @@ fi
 echo -e "${GREEN}Backend is running and responding${NC}"
 
 # Start the frontend development server
-echo -e "\n${GREEN}Starting frontend server...${NC}"
+echo -e "\n${GREEN}Building frontend...${NC}"
 cd frontend
+npm install # Ensure dependencies are up to date (optional, but robust)
+npm run build
+
+echo -e "\n${GREEN}Starting frontend server...${NC}"
 npm run dev &
 FRONTEND_PID=$!
 cd ..

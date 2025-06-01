@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# (DEPRECATED) This script is no longer used. All data is now loaded from local Twitter archive files in twitter-archive-2025-05-31/data/.
+# API authentication is disabled to avoid rate limits and improve privacy.
 """
 Twitter Authentication Test Script
 

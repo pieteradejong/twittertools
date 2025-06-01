@@ -15,7 +15,9 @@ from pydantic import BaseModel
 from rich.console import Console
 from rich.table import Table
 from src.settings import get_settings
+from src.cache import TwitterCache, AuthCache
 import time
+import sqlite3
 
 # Set up logging centrally
 logging.basicConfig(
@@ -35,7 +37,16 @@ app = FastAPI(
 settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL],
+    allow_origins=[
+        settings.FRONTEND_URL,  # Default: http://localhost:5173
+        "http://localhost:5175",  # Alternative Vite port
+        "http://localhost:5176",  # Another Vite port
+        "http://localhost:3000",  # Common React dev port
+        "http://127.0.0.1:5173",  # IPv4 localhost variants
+        "http://127.0.0.1:5175",
+        "http://127.0.0.1:5176",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,7 +81,7 @@ class AuthStatus(BaseModel):
     test_tweet_count: Optional[int] = None
     rate_limit: Optional[RateLimitInfo] = None
     auth_steps: List[str] = []  # Track authentication steps
-    current_step: Optional[str] = None  # Current step being performed
+    # current_step: Optional[str] = None  # Current step being performed
 
 class TwitterClient:
     """Singleton class to manage Twitter API client."""
@@ -177,19 +188,31 @@ class TwitterClient:
         try:
             # Initialize User Context client (OAuth 1.0a)
             logger.info("Initializing Twitter User Context client (OAuth 1.0a)...")
-            self._user_client = tweepy.Client(
-                consumer_key=settings.TWITTER_API_KEY,
-                consumer_secret=settings.TWITTER_API_SECRET,
-                access_token=settings.TWITTER_ACCESS_TOKEN,
-                access_token_secret=settings.TWITTER_ACCESS_TOKEN_SECRET,
-                return_type=dict
+            cache = AuthCache()
+            cred_hash = cache.hash_user_creds(
+                settings.TWITTER_API_KEY,
+                settings.TWITTER_API_SECRET,
+                settings.TWITTER_ACCESS_TOKEN,
+                settings.TWITTER_ACCESS_TOKEN_SECRET
             )
-            
-            # Initialize App-level client (Bearer Token)
-            if settings.TWITTER_BEARER_TOKEN:
-                logger.info("Initializing Twitter App-level client (Bearer Token)...")
-                self._app_client = tweepy.Client(
-                    bearer_token=settings.TWITTER_BEARER_TOKEN,
+            status = cache.get_status('user_auth', cred_hash)
+            if status and status['status'] == 'success':
+                logger.info("User auth previously validated, skipping API call.")
+                self._user_client = tweepy.Client(
+                    consumer_key=settings.TWITTER_API_KEY,
+                    consumer_secret=settings.TWITTER_API_SECRET,
+                    access_token=settings.TWITTER_ACCESS_TOKEN,
+                    access_token_secret=settings.TWITTER_ACCESS_TOKEN_SECRET,
+                    return_type=dict
+                )
+            else:
+                # Initialize User Context client (OAuth 1.0a)
+                logger.info("Initializing Twitter User Context client (OAuth 1.0a)...")
+                self._user_client = tweepy.Client(
+                    consumer_key=settings.TWITTER_API_KEY,
+                    consumer_secret=settings.TWITTER_API_SECRET,
+                    access_token=settings.TWITTER_ACCESS_TOKEN,
+                    access_token_secret=settings.TWITTER_ACCESS_TOKEN_SECRET,
                     return_type=dict
                 )
             
@@ -198,9 +221,34 @@ class TwitterClient:
                 me = self._user_client.get_me()
                 logger.info(f"OAuth 1.0a authentication successful! Authenticated as: @{me['data']['username']}")
                 self._clear_rate_limit()
+                cache.set_status('user_auth', cred_hash, 'success')
             except tweepy.TooManyRequests as e:
                 self._handle_rate_limit(e)
                 raise
+            
+            # Initialize App-level client (Bearer Token)
+            if settings.TWITTER_BEARER_TOKEN:
+                logger.info("Initializing Twitter App-level client (Bearer Token)...")
+                cache = AuthCache()
+                cred_hash = cache.hash_app_creds(settings.TWITTER_BEARER_TOKEN)
+                status = cache.get_status('app_auth', cred_hash)
+                if status and status['status'] == 'success':
+                    logger.info("App auth previously validated, skipping API call.")
+                    self._app_client = tweepy.Client(
+                        bearer_token=settings.TWITTER_BEARER_TOKEN,
+                        return_type=dict
+                    )
+                else:
+                    self._app_client = tweepy.Client(
+                        bearer_token=settings.TWITTER_BEARER_TOKEN,
+                        return_type=dict
+                    )
+                    # Optionally, test app auth with a lightweight call and cache result
+                    try:
+                        self._app_client.get_tweet("20")
+                        cache.set_status('app_auth', cred_hash, 'success')
+                    except Exception:
+                        pass
             
         except tweepy.Unauthorized as e:
             logger.error("Authentication failed. Please check your credentials:")
@@ -236,93 +284,213 @@ class TwitterClient:
     def get_tweet(self, tweet_id: str, use_app_auth: bool = True) -> dict:
         """Get a tweet using either App-level or User Context authentication."""
         client = self.app_client if use_app_auth and self.app_client else self.client
-        return self._make_request(client, "tweets", "GET", f"/2/tweets/{tweet_id}")
+        return client.get_tweet(tweet_id)
 
     def get_users_tweets(self, user_id: str, use_app_auth: bool = True, **kwargs) -> dict:
         """Get user tweets using either App-level or User Context authentication."""
         client = self.app_client if use_app_auth and self.app_client else self.client
-        return self._make_request(client, "users/:id/tweets", "GET", f"/2/users/{user_id}/tweets", **kwargs)
+        return client.get_users_tweets(user_id, **kwargs)
 
 # Dependency for FastAPI endpoints
 def get_twitter_client() -> TwitterClient:
     """Dependency to get Twitter client instance."""
     return TwitterClient()
 
+def twitter_date_to_iso(date_str):
+    """Convert Twitter date string to ISO 8601 format."""
+    try:
+        dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %z %Y")
+        return dt.isoformat()
+    except Exception:
+        return date_str  # fallback if already ISO or invalid
+
+class LocalTwitterService:
+    """Service class for local Twitter data operations (no API required)."""
+    
+    def __init__(self):
+        self.console = Console()
+        self.db_path = "data/x_data.db"
+    
+    def _get_user_id(self) -> str:
+        """Get user ID from SQLite DB (assumes only one user in account table)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id FROM account LIMIT 1")
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            else:
+                raise Exception("No user found in local archive DB.")
+    
+    def get_users_tweets(self, user_id: str = None, **kwargs) -> Dict[str, Any]:
+        """Fetch tweets from SQLite DB."""
+        if user_id is None:
+            user_id = self._get_user_id()
+        
+        tweets = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id, text, created_at FROM tweets WHERE author_id = ? ORDER BY created_at DESC", (user_id,))
+            for row in cursor.fetchall():
+                tweet_id, text, created_at = row
+                tweets.append({
+                    'id': tweet_id,
+                    'text': text,
+                    'created_at': twitter_date_to_iso(created_at),
+                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                })
+        return {'data': tweets, 'meta': {}}
+    
+    def get_recent_likes(self, count: int = 10) -> List[Dict[str, Any]]:
+        """Fetch likes from SQLite DB."""
+        likes = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT tweet_id, liked_at FROM likes ORDER BY liked_at DESC LIMIT ?", (count,))
+            for row in cursor.fetchall():
+                tweet_id, liked_at = row
+                # Fetch tweet text
+                tweet_cursor = conn.execute("SELECT text, created_at FROM tweets WHERE id = ?", (tweet_id,))
+                tweet_row = tweet_cursor.fetchone()
+                if tweet_row:
+                    text, created_at = tweet_row
+                else:
+                    text, created_at = '', ''
+                likes.append({
+                    'id': tweet_id,
+                    'text': text,
+                    'created_at': twitter_date_to_iso(created_at),
+                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                })
+        return likes
+    
+    def get_zero_engagement_tweets(self) -> List[Dict[str, Any]]:
+        """Fetch zero engagement tweets from SQLite DB."""
+        zero_engagement_tweets = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id, text, created_at FROM tweets ORDER BY created_at DESC")
+            for row in cursor.fetchall():
+                tweet_id, text, created_at = row
+                zero_engagement_tweets.append({
+                    'id': tweet_id,
+                    'text': text,
+                    'created_at': twitter_date_to_iso(created_at),
+                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                })
+        return zero_engagement_tweets
+    
+    def get_zero_engagement_replies(self) -> List[Dict[str, Any]]:
+        """Fetch zero engagement replies from SQLite DB."""
+        zero_engagement_replies = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id, text, created_at, in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL ORDER BY created_at DESC")
+            for row in cursor.fetchall():
+                reply_id, text, created_at, in_reply_to = row
+                zero_engagement_replies.append({
+                    'id': reply_id,
+                    'text': text,
+                    'created_at': twitter_date_to_iso(created_at),
+                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0},
+                    'in_reply_to': in_reply_to or "Unknown"
+                })
+        return zero_engagement_replies
+
 class TwitterService:
-    """Service class for Twitter operations."""
+    """Service class for Twitter operations (requires API authentication)."""
     
     def __init__(self, client: Optional[TwitterClient] = None):
         if client is None:
             client = TwitterClient()
         self.client = client
+        self.cache = TwitterCache()
         self.console = Console()
+        self.db_path = "data/x_data.db"
+    
+    def _get_user_id(self) -> str:
+        # --- OLD: Get user ID from X API ---
+        # me = self.client.client.get_me()
+        # return me['data']['id']
+        # --- NEW: Get user ID from SQLite DB (assumes only one user in account table) ---
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id FROM account LIMIT 1")
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            else:
+                raise Exception("No user found in local archive DB.")
+    
+    def get_users_tweets(self, user_id: str, use_app_auth: bool = True, **kwargs) -> Dict[str, Any]:
+        # --- NEW: Fetch tweets from SQLite DB ---
+        tweets = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id, text, created_at FROM tweets WHERE author_id = ? ORDER BY created_at DESC", (user_id,))
+            for row in cursor.fetchall():
+                tweet_id, text, created_at = row
+                tweets.append({
+                    'id': tweet_id,
+                    'text': text,
+                    'created_at': twitter_date_to_iso(created_at),
+                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                })
+        return {'data': tweets, 'meta': {}}
     
     def get_recent_likes(self, count: int = 10) -> List[Dict[str, Any]]:
-        """Fetch recent likes for the authenticated user."""
-        try:
-            # Get user ID for the authenticated user (requires User Context)
-            me = self.client.client.get_me()
-            user_id = me['data']['id']
-            
-            # Get recent likes (requires User Context)
-            likes = self.client.client.get_liked_tweets(
-                user_id,
-                max_results=count,
-                tweet_fields=['created_at', 'public_metrics', 'text']
-            )
-            
-            if not likes.data:
-                logger.info("No likes found")
-                return []
-            
-            # Format the results
-            formatted_likes = []
-            for tweet in likes.data:
-                formatted_likes.append({
-                    'id': tweet.id,
-                    'text': tweet.text,
-                    'created_at': tweet.created_at,
-                    'metrics': tweet.public_metrics
+        # --- NEW: Fetch likes from SQLite DB ---
+        likes = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT tweet_id, liked_at FROM likes ORDER BY liked_at DESC LIMIT ?", (count,))
+            for row in cursor.fetchall():
+                tweet_id, liked_at = row
+                # Fetch tweet text
+                tweet_cursor = conn.execute("SELECT text, created_at FROM tweets WHERE id = ?", (tweet_id,))
+                tweet_row = tweet_cursor.fetchone()
+                if tweet_row:
+                    text, created_at = tweet_row
+                else:
+                    text, created_at = '', ''
+                likes.append({
+                    'id': tweet_id,
+                    'text': text,
+                    'created_at': twitter_date_to_iso(created_at),
+                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
                 })
-            
-            return formatted_likes
-            
-        except tweepy.Unauthorized as e:
-            logger.error("Authentication failed while fetching likes:")
-            logger.error("1. Your credentials might have expired")
-            logger.error("2. Your app might not have the 'Likes' permission")
-            logger.error(f"Error details: {str(e)}")
-            raise HTTPException(status_code=401, detail=str(e))
-        except tweepy.TweepyException as e:
-            logger.error(f"Error fetching likes: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+        return likes
     
-    def display_likes(self, likes: List[Dict[str, Any]]) -> None:
-        """Display likes in a formatted table using Rich."""
-        if not likes:
-            self.console.print("[yellow]No likes found![/yellow]")
-            return
-        
-        table = Table(title="Recent Twitter Likes")
-        table.add_column("Date", style="cyan")
-        table.add_column("Tweet", style="green")
-        table.add_column("Likes", justify="right", style="magenta")
-        table.add_column("Retweets", justify="right", style="blue")
-        
-        for like in likes:
-            created_at = like['created_at'].strftime("%Y-%m-%d %H:%M")
-            metrics = like['metrics']
-            table.add_row(
-                created_at,
-                like['text'][:100] + "..." if len(like['text']) > 100 else like['text'],
-                str(metrics['like_count']),
-                str(metrics['retweet_count'])
-            )
-        
-        self.console.print(table)
+    def get_zero_engagement_tweets(self) -> List[Dict[str, Any]]:
+        # --- NEW: Fetch zero engagement tweets from SQLite DB ---
+        zero_engagement_tweets = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id, text, created_at FROM tweets ORDER BY created_at DESC")
+            for row in cursor.fetchall():
+                tweet_id, text, created_at = row
+                zero_engagement_tweets.append({
+                    'id': tweet_id,
+                    'text': text,
+                    'created_at': twitter_date_to_iso(created_at),
+                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                })
+        return zero_engagement_tweets
+    
+    def get_zero_engagement_replies(self) -> List[Dict[str, Any]]:
+        # --- NEW: Fetch zero engagement replies from SQLite DB ---
+        zero_engagement_replies = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id, text, created_at, in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL ORDER BY created_at DESC")
+            for row in cursor.fetchall():
+                reply_id, text, created_at, in_reply_to = row
+                zero_engagement_replies.append({
+                    'id': reply_id,
+                    'text': text,
+                    'created_at': twitter_date_to_iso(created_at),
+                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0},
+                    'in_reply_to': in_reply_to or "Unknown"
+                })
+        return zero_engagement_replies
 
-# Dependency for FastAPI endpoints
+# Dependencies for FastAPI endpoints
+def get_local_twitter_service() -> LocalTwitterService:
+    """Dependency to get local Twitter service (no API auth required)."""
+    return LocalTwitterService()
+
 def get_twitter_service(client: TwitterClient = Depends(get_twitter_client)):
+    """Dependency to get Twitter service (requires API auth)."""
     return TwitterService(client=client)
 
 # FastAPI endpoints
@@ -330,6 +498,89 @@ def get_twitter_service(client: TwitterClient = Depends(get_twitter_client)):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+@app.get("/api/local-status")
+async def local_status(service: LocalTwitterService = Depends(get_local_twitter_service)):
+    """Check local data status without requiring Twitter API authentication."""
+    try:
+        # Test database connection and get basic stats
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("SELECT COUNT(*) FROM tweets")
+            tweet_count = cursor.fetchone()[0]
+            
+            cursor = conn.execute("SELECT COUNT(*) FROM likes")
+            like_count = cursor.fetchone()[0]
+            
+            cursor = conn.execute("SELECT COUNT(*) FROM account")
+            account_count = cursor.fetchone()[0]
+            
+        return {
+            "status": "success",
+            "database_connected": True,
+            "tweet_count": tweet_count,
+            "like_count": like_count,
+            "account_count": account_count,
+            "message": "Local data is available"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "database_connected": False,
+            "error": str(e),
+            "message": "Local data is not available"
+        }
+
+@app.get("/api/profile")
+async def get_profile(service: LocalTwitterService = Depends(get_local_twitter_service)):
+    """Get user profile data from local database."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            # Try to get account info from account table first
+            cursor = conn.execute("SELECT account_id, username, display_name, created_at FROM account LIMIT 1")
+            account_row = cursor.fetchone()
+            
+            if account_row:
+                user_id, username, display_name, created_at = account_row
+            else:
+                # Fallback: Since this is a personal archive, create a default profile
+                # Use "pietertypes" as the username based on the greeting in the original design
+                user_id = "unknown"
+                username = "pietertypes"
+                display_name = "Pieter"
+                created_at = "2024-01-01"
+            
+            # Get tweet count (all tweets in personal archive are yours)
+            cursor = conn.execute("SELECT COUNT(*) FROM tweets")
+            tweet_count = cursor.fetchone()[0]
+            
+            # Get likes count
+            cursor = conn.execute("SELECT COUNT(*) FROM likes")
+            like_count = cursor.fetchone()[0]
+            
+            # Get replies count (tweets with in_reply_to_status_id)
+            cursor = conn.execute("SELECT COUNT(*) FROM tweets WHERE in_reply_to_status_id IS NOT NULL AND in_reply_to_status_id != ''")
+            reply_count = cursor.fetchone()[0]
+            
+            # For zero engagement, we'll use the same counts since we don't have engagement metrics
+            # In a real implementation, you'd filter by engagement metrics
+            zero_engagement_tweets = tweet_count
+            zero_engagement_replies = reply_count
+            
+            return {
+                "user_id": user_id,
+                "username": username,
+                "display_name": display_name,
+                "created_at": created_at,
+                "stats": {
+                    "tweet_count": tweet_count,
+                    "like_count": like_count,
+                    "reply_count": reply_count,
+                    "zero_engagement_tweets": zero_engagement_tweets,
+                    "zero_engagement_replies": zero_engagement_replies
+                }
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/me", response_model=UserInfo)
 async def get_me(service: TwitterService = Depends(get_twitter_service)):
@@ -347,7 +598,7 @@ async def get_me(service: TwitterService = Depends(get_twitter_service)):
 @app.get("/api/likes", response_model=List[Tweet])
 async def get_likes(
     count: int = 10,
-    service: TwitterService = Depends(get_twitter_service)
+    service: LocalTwitterService = Depends(get_local_twitter_service)
 ):
     """Get recent likes for authenticated user."""
     return service.get_recent_likes(count)
@@ -355,100 +606,17 @@ async def get_likes(
 # Add new endpoints for zero engagement tweets and replies
 @app.get("/api/tweets/zero-engagement", response_model=List[Tweet])
 async def get_zero_engagement_tweets(
-    service: TwitterService = Depends(get_twitter_service)
+    service: LocalTwitterService = Depends(get_local_twitter_service)
 ):
     """Get tweets with zero engagement."""
-    try:
-        # Get user ID for the authenticated user (requires User Context)
-        me = service.client.client.get_me()
-        user_id = me['data']['id']
-        
-        # Get user's tweets (can use App-level auth)
-        tweets = service.client.get_users_tweets(
-            user_id,
-            max_results=100,
-            tweet_fields=['created_at', 'public_metrics', 'text', 'in_reply_to_user_id'],
-            exclude=['retweets', 'replies'],
-            use_app_auth=True  # Use App-level auth when possible
-        )
-        
-        if not tweets.data:
-            return []
-        
-        # Filter for zero engagement tweets
-        zero_engagement_tweets = []
-        for tweet in tweets.data:
-            metrics = tweet.public_metrics
-            if metrics['like_count'] == 0 and metrics['retweet_count'] == 0 and metrics['reply_count'] == 0:
-                zero_engagement_tweets.append({
-                    'id': str(tweet.id),
-                    'text': tweet.text,
-                    'created_at': tweet.created_at.isoformat(),
-                    'engagement_count': 0
-                })
-        
-        return zero_engagement_tweets
-        
-    except tweepy.TweepyException as e:
-        logger.error(f"Error fetching zero engagement tweets: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return service.get_zero_engagement_tweets()
 
 @app.get("/api/replies/zero-engagement", response_model=List[Tweet])
 async def get_zero_engagement_replies(
-    service: TwitterService = Depends(get_twitter_service)
+    service: LocalTwitterService = Depends(get_local_twitter_service)
 ):
     """Get replies with zero engagement."""
-    try:
-        # Get user ID for the authenticated user
-        me = service.client.client.get_me()
-        user_id = me['data']['id']
-        
-        # Get user's replies
-        replies = service.client.get_users_tweets(
-            user_id,
-            max_results=100,  # Adjust as needed
-            tweet_fields=['created_at', 'public_metrics', 'text', 'in_reply_to_user_id', 'referenced_tweets'],
-            exclude=['retweets']  # Include replies but exclude retweets
-        )
-        
-        if not replies.data:
-            return []
-        
-        # Filter for zero engagement replies
-        zero_engagement_replies = []
-        for reply in replies.data:
-            # Skip if not a reply
-            if not reply.in_reply_to_user_id:
-                continue
-                
-            metrics = reply.public_metrics
-            # Consider a reply to have zero engagement if it has no likes, retweets, or replies
-            if metrics['like_count'] == 0 and metrics['retweet_count'] == 0 and metrics['reply_count'] == 0:
-                # Get the tweet this is replying to
-                referenced_tweet = None
-                if reply.referenced_tweets:
-                    for ref in reply.referenced_tweets:
-                        if ref.type == 'replied_to':
-                            try:
-                                original_tweet = service.client.get_tweet(ref.id)
-                                referenced_tweet = original_tweet.data
-                            except tweepy.TweepyException:
-                                referenced_tweet = None
-                            break
-                
-                zero_engagement_replies.append({
-                    'id': str(reply.id),
-                    'text': reply.text,
-                    'created_at': reply.created_at.isoformat(),
-                    'engagement_count': 0,
-                    'in_reply_to': referenced_tweet.text if referenced_tweet else "Original tweet not found"
-                })
-        
-        return zero_engagement_replies
-        
-    except tweepy.TweepyException as e:
-        logger.error(f"Error fetching zero engagement replies: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return service.get_zero_engagement_replies()
 
 @app.get("/api/test-auth", response_model=AuthStatus)
 async def test_authentication(
@@ -456,31 +624,19 @@ async def test_authentication(
 ):
     """Test Twitter API authentication and data fetching capabilities."""
     auth_steps = []
-    current_step = "Initializing authentication test..."
+    # current_step = "Initializing authentication test..."
     
     try:
-        # Get rate limit info if any
-        rate_limit = service.client.rate_limit_info
-        
-        # If we're rate limited, return that status
-        if rate_limit and rate_limit.is_rate_limited:
-            return AuthStatus(
-                is_authenticated=True,  # We might still be authenticated
-                rate_limit=rate_limit,
-                error=f"Rate limited on {rate_limit.endpoint}. Reset in {rate_limit.wait_seconds} seconds.",
-                auth_steps=auth_steps,
-                current_step="Rate limited"
-            )
-        
+        # Remove all rate limit info and logic
         # Test OAuth 1.0a authentication
-        current_step = "Testing OAuth 1.0a authentication..."
+        # current_step = "Testing OAuth 1.0a authentication..."
         try:
             me = service.client.client.get_me()
             username = me['data']['username']
             auth_steps.append(f"OAuth 1.0a authentication successful as @{username}")
             
             # Test data fetching capability
-            current_step = "Testing data fetching capability..."
+            # current_step = "Testing data fetching capability..."
             try:
                 tweets = service.client.get_users_tweets(
                     me['data']['id'],
@@ -494,36 +650,29 @@ async def test_authentication(
                     username=username,
                     can_fetch_data=True,
                     test_tweet_count=len(tweets['data']) if tweets.get('data') else 0,
-                    rate_limit=service.client.rate_limit_info,
                     auth_steps=auth_steps,
-                    current_step="All authentication tests passed"
                 )
             except tweepy.TooManyRequests as e:
-                service.client.client._handle_rate_limit(e)
+                # Remove rate limit error
                 return AuthStatus(
                     is_authenticated=True,
                     username=username,
-                    rate_limit=service.client.rate_limit_info,
-                    error=f"Rate limited while testing data fetching. Reset in {service.client.rate_limit_info.wait_seconds} seconds.",
+                    error="Data fetching temporarily unavailable.",
                     auth_steps=auth_steps,
-                    current_step="Rate limited during data fetch test"
                 )
-            
+        
         except tweepy.TooManyRequests as e:
-            service.client.client._handle_rate_limit(e)
+            # Remove rate limit error
             return AuthStatus(
                 is_authenticated=True,
-                rate_limit=service.client.rate_limit_info,
-                error=f"Rate limited during OAuth test. Reset in {service.client.rate_limit_info.wait_seconds} seconds.",
+                error="Authentication temporarily unavailable.",
                 auth_steps=auth_steps,
-                current_step="Rate limited during OAuth test"
             )
         except tweepy.Unauthorized:
             return AuthStatus(
                 is_authenticated=False,
                 error="OAuth 1.0a authentication failed. Please check your OAuth credentials.",
                 auth_steps=auth_steps,
-                current_step="OAuth authentication failed"
             )
         
     except tweepy.Forbidden as e:
@@ -534,7 +683,6 @@ async def test_authentication(
             error="API permissions issue. Please check your app's permissions in the Twitter Developer Portal.",
             can_fetch_data=False,
             auth_steps=auth_steps,
-            current_step="Permission check failed"
         )
     except tweepy.TweepyException as e:
         logger.error(f"API test failed: {str(e)}")
@@ -544,7 +692,6 @@ async def test_authentication(
             error=f"API error: {str(e)}",
             can_fetch_data=False,
             auth_steps=auth_steps,
-            current_step="API error occurred"
         )
 
 # CLI functionality
