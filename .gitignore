@@ -2,6 +2,7 @@
 private.py
 *.json
 twitter-personal-archive/
+twitter-archive-*/
 twitter-archive*.zip
 venv/
 logs/
