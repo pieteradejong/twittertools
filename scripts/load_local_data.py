@@ -39,7 +39,8 @@ def create_tables(conn):
         favorite_count INTEGER, -- tweet.favorite_count
         retweet_count INTEGER, -- tweet.retweet_count
         lang TEXT, -- tweet.lang
-        deleted_at TEXT -- deleted_tweets.deleted_at
+        deleted_at TEXT, -- deleted_tweets.deleted_at
+        status TEXT DEFAULT 'published' -- 'published' or 'deleted'
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS likes (
         tweet_id TEXT PRIMARY KEY, -- like.tweetId
@@ -91,25 +92,34 @@ def create_tables(conn):
     )''')
     conn.commit()
 
-def insert_tweets(conn, tweets):
+def get_account_id(account_js_path):
+    with open(account_js_path) as f:
+        js = f.read()
+        # Remove JS variable assignment if present
+        js = js.split('=', 1)[1].strip()
+        account_json = json.loads(js)
+        return account_json[0]['account']['accountId']
+
+def insert_tweets(conn, tweets, account_id):
     c = conn.cursor()
     count = 0
     for entry in tweets:
         tweet = entry.get('tweet') or entry
-        c.execute('''INSERT OR IGNORE INTO tweets (id, text, created_at, conversation_id, author_id, in_reply_to_status_id, in_reply_to_user_id, in_reply_to_screen_name, favorite_count, retweet_count, lang, deleted_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        c.execute('''INSERT OR IGNORE INTO tweets (id, text, created_at, conversation_id, author_id, in_reply_to_status_id, in_reply_to_user_id, in_reply_to_screen_name, favorite_count, retweet_count, lang, deleted_at, status)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                   (tweet.get('id_str') or tweet.get('id'),
                    tweet.get('full_text') or tweet.get('text'),
                    tweet.get('created_at'),
                    tweet.get('conversation_id'),
-                   tweet.get('user_id_str') or tweet.get('author_id'),
+                   account_id,  # Set author_id to your account ID
                    tweet.get('in_reply_to_status_id'),
                    tweet.get('in_reply_to_user_id'),
                    tweet.get('in_reply_to_screen_name'),
-                   tweet.get('favorite_count'),
-                   tweet.get('retweet_count'),
+                   int(tweet.get('favorite_count') or 0),
+                   int(tweet.get('retweet_count') or 0),
                    tweet.get('lang'),
-                   tweet.get('deleted_at')))
+                   tweet.get('deleted_at'),
+                   'published'))
         count += 1
     conn.commit()
     return count
@@ -174,11 +184,16 @@ def main():
     conn = sqlite3.connect(db_path)
     create_tables(conn)
     summary = {}
+
+    # Load account ID from account.js
+    account_js_path = data_dir / 'account.js'
+    account_id = get_account_id(account_js_path)
+
     # Tweets
     tweets_path = data_dir / 'tweets.js'
     if tweets_path.exists():
         tweets_data = load_json_js(tweets_path)
-        summary['tweets'] = insert_tweets(conn, tweets_data)
+        summary['tweets'] = insert_tweets(conn, tweets_data, account_id)
     else:
         summary['tweets'] = 0
     # Likes
@@ -218,6 +233,26 @@ def main():
             summary[utype] = insert_users(conn, users_data)
         else:
             summary[utype] = 0
+    # Profile
+    profile_path = data_dir / 'profile.js'
+    if profile_path.exists():
+        profile_data = load_json_js(profile_path)
+        if profile_data and 'profile' in profile_data[0]:
+            p = profile_data[0]['profile']
+            avatar_url = p.get('avatarMediaUrl')
+            header_url = p.get('headerMediaUrl')
+            bio = p.get('description', {}).get('bio', '')
+            website = p.get('description', {}).get('website', '')
+            location = p.get('description', {}).get('location', '')
+            c = conn.cursor()
+            c.execute('''INSERT OR REPLACE INTO profile (account_id, bio, website, location, avatar_url, header_url) VALUES (?, ?, ?, ?, ?, ?)''',
+                      (account_id, bio, website, location, avatar_url, header_url))
+            conn.commit()
+            summary['profile'] = 1
+        else:
+            summary['profile'] = 0
+    else:
+        summary['profile'] = 0
     print("Summary of records inserted:")
     for k, v in summary.items():
         print(f"{k}: {v}")

@@ -1,6 +1,25 @@
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { Tweet } from './Tweet';
+import { useState } from 'react';
+
+interface ProfileData {
+  user_id: string;
+  username: string;
+  display_name: string;
+  created_at: string;
+  stats: {
+    tweet_count: number;
+    like_count: number;
+    reply_count: number;
+    zero_engagement_tweets: number;
+    zero_engagement_replies: number;
+  };
+  avatar_url?: string;
+  bio?: string;
+  website?: string;
+  location?: string;
+}
 
 interface TweetData {
   id: string;
@@ -14,24 +33,34 @@ interface TweetData {
   };
 }
 
-async function fetchTweets() {
-  const { data } = await axios.get<TweetData[]>('http://localhost:8000/api/tweets/zero-engagement');
-  return data;
-}
-
 interface TweetListProps {
   isActive: boolean;
+  type?: 'likes' | 'bookmarks';
+  profile: ProfileData;
 }
 
-export function TweetList({ isActive }: TweetListProps) {
+export function TweetList({ isActive, type, profile }: TweetListProps) {
+  console.log('profile: ', profile);
+  const [page, setPage] = useState(0);
+  const limit = 20;
+  const fetcher = async ({ pageParam = 0 }) => {
+    const offset = pageParam * limit;
+    if (type === 'likes') {
+      const { data } = await axios.get<TweetData[]>(`http://localhost:8000/api/likes?limit=${limit}&offset=${offset}`);
+      return data.filter((tweet: TweetData & { status?: string }) => tweet.status === undefined || tweet.status === 'published');
+    } else if (type === 'bookmarks') {
+      const { data } = await axios.get<TweetData[]>(`http://localhost:8000/api/bookmarks?limit=${limit}&offset=${offset}`);
+      return data.filter((tweet: TweetData & { status?: string }) => tweet.status === undefined || tweet.status === 'published');
+    } else {
+      const { data } = await axios.get<TweetData[]>(`http://localhost:8000/api/tweets/zero-engagement?limit=${limit}&offset=${offset}`);
+      return data.filter((tweet: TweetData & { status?: string }) => tweet.status === undefined || tweet.status === 'published');
+    }
+  };
   const { data: tweets, isLoading, error, refetch } = useQuery({
-    queryKey: ['tweets'],
-    queryFn: fetchTweets,
-    // Only fetch when the tab is active
+    queryKey: ['tweets', type, page],
+    queryFn: () => fetcher({ pageParam: page }),
     enabled: isActive,
-    // Cache for 5 minutes
     staleTime: 5 * 60 * 1000,
-    // Don't refetch automatically
     refetchOnWindowFocus: false,
     refetchInterval: false,
   });
@@ -44,10 +73,8 @@ export function TweetList({ isActive }: TweetListProps) {
       <div className="bg-white border-b border-gray-200 p-4 sticky top-0 z-10">
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Zero Engagement Tweets</h1>
-            <p className="text-sm text-gray-600 mt-1">
-              {tweets ? `${tweets.length} tweets with no engagement` : 'Loading...'}
-            </p>
+            {/* Removed: <h1 className="text-xl font-bold text-gray-900">Zero Engagement Tweets</h1> */}
+            {/* Removed: <p className="text-sm text-gray-600 mt-1">...</p> */}
           </div>
           <button 
             className="px-4 py-2 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors" 
@@ -65,7 +92,7 @@ export function TweetList({ isActive }: TweetListProps) {
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-              <p className="text-gray-500">Loading tweets...</p>
+              <p className="text-gray-500">{type === 'likes' ? 'Loading likes...' : type === 'bookmarks' ? 'Loading bookmarks...' : 'Loading tweets...'}</p>
             </div>
           </div>
         ) : error ? (
@@ -89,21 +116,41 @@ export function TweetList({ isActive }: TweetListProps) {
             </div>
           </div>
         ) : (
-          <div className="bg-white divide-y divide-gray-200">
-            {tweets.map((tweet) => (
-              <Tweet
-                key={tweet.id}
-                id={tweet.id}
-                text={tweet.text}
-                created_at={tweet.created_at}
-                metrics={tweet.metrics}
-                onDelete={(id) => {
-                  // TODO: Implement delete functionality
-                  console.log('Delete tweet:', id);
-                }}
-              />
-            ))}
-          </div>
+          <>
+            <div className="bg-white divide-y divide-gray-200">
+              {tweets.map((tweet) => {
+                console.log('Tweet object:', tweet);
+                return (
+                  <Tweet
+                    key={tweet.id}
+                    id={tweet.id}
+                    text={tweet.text}
+                    created_at={tweet.created_at}
+                    metrics={tweet.metrics}
+                    profileUsername={profile?.username}
+                  />
+                );
+              })}
+            </div>
+            {/* Pagination Controls */}
+            <div className="flex justify-between items-center py-4">
+              <button
+                className="px-4 py-2 rounded bg-gray-100 border border-gray-300 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+              >
+                Previous
+              </button>
+              <span className="text-sm text-gray-500">Page {page + 1}</span>
+              <button
+                className="px-4 py-2 rounded bg-gray-100 border border-gray-300 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                onClick={() => setPage((p) => (tweets.length === limit ? p + 1 : p))}
+                disabled={tweets.length < limit}
+              >
+                Next
+              </button>
+            </div>
+          </>
         )}
       </div>
     </div>

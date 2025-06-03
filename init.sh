@@ -98,7 +98,9 @@ fi
 
 # Load .env file if present, but do not overwrite existing env vars
 if [ -f ".env" ]; then
-    export $(grep -v '^#' .env | xargs -d '\n')
+    set -a
+    source .env
+    set +a
 fi
 
 # Function to validate Twitter credentials from environment variables
@@ -162,6 +164,14 @@ VITE_API_URL=http://localhost:8000
 EOL
     echo -e "${GREEN}Frontend .env file created.${NC}"
 fi
+
+echo "Resetting and initializing the local database..."
+./data/reset_db.sh
+
+echo "Loading Twitter archive data into the database..."
+python scripts/load_local_data.py
+
+echo "Database is ready and loaded with your Twitter archive!"
 
 echo -e "${GREEN}Initialization complete!${NC}"
 echo -e "${YELLOW}Next steps:${NC}"

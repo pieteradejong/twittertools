@@ -4,6 +4,8 @@ import { ReplyList } from "./components/ReplyList";
 import { Sidebar } from "./components/Sidebar";
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
+import { FollowingList } from "./components/FollowingList";
+import { FollowersList } from "./components/FollowersList";
 
 interface ProfileData {
   user_id: string;
@@ -25,13 +27,20 @@ async function fetchProfile() {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("tweets");
+  const [activeTab, setActiveTab] = useState("zero-engagement-tweets");
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ['profile'],
     queryFn: fetchProfile,
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
+
+  if (profileLoading) {
+    return <div>Loading profile...</div>;
+  }
+  if (!profile) {
+    return <div>Error: Profile not loaded</div>;
+  }
 
   // Map tab values to display names
   const getTabDisplayName = (tab: string) => {
@@ -43,7 +52,8 @@ export default function App() {
       lists: "Lists",
       analytics: "Analytics",
       following: "Following",
-      blocked: "Blocked"
+      blocked: "Blocked",
+      followers: "Followers"
     };
     return tabNames[tab] || tab;
   };
@@ -60,10 +70,19 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto bg-gray-50">
-        {activeTab === "tweets" && <TweetList isActive={true} />}
+        {activeTab === "tweets" && <TweetList isActive={true} profile={profile} />}
+        {activeTab === "likes" && <TweetList isActive={true} type="likes" profile={profile} />}
+        {activeTab === "bookmarks" && <TweetList isActive={true} type="bookmarks" profile={profile} />}
         {activeTab === "replies" && <ReplyList isActive={true} />}
+        {activeTab === "zero-engagement-tweets" && (
+          <div className="max-w-2xl mx-auto py-8">
+            <TweetList isActive={activeTab === "zero-engagement-tweets"} profile={profile} />
+          </div>
+        )}
+        {activeTab === "following" && <FollowingList isActive={true} />}
+        {activeTab === "followers" && <FollowersList isActive={true} />}
         {/* Placeholder for other tabs */}
-        {!["tweets", "replies"].includes(activeTab) && (
+        {!["tweets", "likes", "bookmarks", "replies", "zero-engagement-tweets", "following", "followers"].includes(activeTab) && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <h2 className="text-2xl font-bold text-gray-900 mb-2">{getTabDisplayName(activeTab)}</h2>

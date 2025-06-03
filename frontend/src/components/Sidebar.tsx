@@ -12,14 +12,20 @@ interface SidebarProps {
       zero_engagement_tweets: number;
       zero_engagement_replies: number;
     };
+    avatar_url?: string;
+    display_name?: string;
+    created_at?: string;
+    bio?: string;
+    website?: string;
+    location?: string;
   };
   profileLoading: boolean;
 }
 
 const NAV_ITEMS = [
-  { 
-    label: "Tweets", 
-    value: "tweets", 
+  {
+    label: "Zero Engagement Tweets",
+    value: "zero-engagement-tweets",
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -81,6 +87,15 @@ const NAV_ITEMS = [
     )
   },
   { 
+    label: "Followers", 
+    value: "followers", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+      </svg>
+    )
+  },
+  { 
     label: "Blocked", 
     value: "blocked", 
     icon: (
@@ -97,11 +112,19 @@ export function Sidebar({ activeTab, onTabChange, profile, profileLoading }: Sid
       {/* Twitter Logo & Header */}
       <div className="p-6 border-b border-gray-200">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.827 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-7.496 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z"/>
-            </svg>
-          </div>
+          {profile && profile.avatar_url ? (
+            <img
+              src={profile.avatar_url}
+              alt={profile.username}
+              className="w-8 h-8 rounded-full object-cover border border-gray-200"
+            />
+          ) : (
+            <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+              <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.827 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-7.496 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z"/>
+              </svg>
+            </div>
+          )}
           <h1 className="text-xl font-bold text-gray-900">Twitter Tools</h1>
         </div>
         
@@ -116,9 +139,32 @@ export function Sidebar({ activeTab, onTabChange, profile, profileLoading }: Sid
             <h2 className="text-lg font-semibold text-gray-900">
               Hi @{profile.username},
             </h2>
-            <p className="text-sm text-gray-600 mt-1">
-              Manage your zero engagement content
-            </p>
+            {/* Stats Panel */}
+            <div className="mt-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
+              <div className="grid grid-cols-2 gap-2 text-xs text-gray-700">
+                <div className="font-medium">Tweets</div>
+                <div className="text-right">{profile.stats.tweet_count}</div>
+                <div className="font-medium">Replies</div>
+                <div className="text-right">{profile.stats.reply_count}</div>
+                <div className="font-medium">Likes</div>
+                <div className="text-right">{profile.stats.like_count}</div>
+                <div className="font-medium">Zero Engagement Tweets</div>
+                <div className="text-right">{profile.stats.zero_engagement_tweets}</div>
+                <div className="font-medium">Zero Engagement Replies</div>
+                <div className="text-right">{profile.stats.zero_engagement_replies}</div>
+              </div>
+            </div>
+            {/* Profile Info Panel */}
+            <div className="mt-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
+              <div className="text-xs text-gray-700 space-y-1">
+                <div><span className="font-medium">Display Name:</span> {profile.display_name}</div>
+                <div><span className="font-medium">Username:</span> @{profile.username}</div>
+                <div><span className="font-medium">Joined:</span> {profile.created_at}</div>
+                {profile.bio && <div><span className="font-medium">Bio:</span> {profile.bio}</div>}
+                {profile.website && <div><span className="font-medium">Website:</span> <a href={profile.website} className="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">{profile.website}</a></div>}
+                {profile.location && <div><span className="font-medium">Location:</span> {profile.location}</div>}
+              </div>
+            </div>
           </div>
         ) : (
           <div className="text-sm text-gray-500">Loading profile...</div>

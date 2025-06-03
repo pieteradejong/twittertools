@@ -6,10 +6,12 @@ Features both a CLI interface and a REST API.
 """
 import argparse
 import logging
+import sys
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import tweepy
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from rich.console import Console
@@ -19,10 +21,11 @@ from src.cache import TwitterCache, AuthCache
 import time
 import sqlite3
 
-# Set up logging centrally
+# Set up logging centrally (always INFO for startup)
 logging.basicConfig(
-    level=logging.INFO if get_settings().DEBUG else logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
 
@@ -325,17 +328,27 @@ class LocalTwitterService:
         """Fetch tweets from SQLite DB."""
         if user_id is None:
             user_id = self._get_user_id()
-        
         tweets = []
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT id, text, created_at FROM tweets WHERE author_id = ? ORDER BY created_at DESC", (user_id,))
+            # Build a map of tweet_id to reply count
+            reply_counts = {}
+            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
+            for (in_reply_to_status_id,) in reply_cursor.fetchall():
+                if in_reply_to_status_id:
+                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
+            cursor = conn.execute("SELECT id, text, created_at, favorite_count, retweet_count FROM tweets WHERE author_id = ? ORDER BY created_at DESC", (user_id,))
             for row in cursor.fetchall():
-                tweet_id, text, created_at = row
+                tweet_id, text, created_at, favorite_count, retweet_count = row
+                reply_count = reply_counts.get(tweet_id, 0)
                 tweets.append({
                     'id': tweet_id,
                     'text': text,
                     'created_at': twitter_date_to_iso(created_at),
-                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                    'metrics': {
+                        'like_count': favorite_count or 0,
+                        'retweet_count': retweet_count or 0,
+                        'reply_count': reply_count
+                    }
                 })
         return {'data': tweets, 'meta': {}}
     
@@ -343,21 +356,32 @@ class LocalTwitterService:
         """Fetch likes from SQLite DB."""
         likes = []
         with sqlite3.connect(self.db_path) as conn:
+            # Build a map of tweet_id to reply count
+            reply_counts = {}
+            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
+            for (in_reply_to_status_id,) in reply_cursor.fetchall():
+                if in_reply_to_status_id:
+                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
             cursor = conn.execute("SELECT tweet_id, liked_at FROM likes ORDER BY liked_at DESC LIMIT ?", (count,))
             for row in cursor.fetchall():
                 tweet_id, liked_at = row
-                # Fetch tweet text
-                tweet_cursor = conn.execute("SELECT text, created_at FROM tweets WHERE id = ?", (tweet_id,))
+                # Fetch tweet text and metrics
+                tweet_cursor = conn.execute("SELECT text, created_at, favorite_count, retweet_count FROM tweets WHERE id = ?", (tweet_id,))
                 tweet_row = tweet_cursor.fetchone()
                 if tweet_row:
-                    text, created_at = tweet_row
+                    text, created_at, favorite_count, retweet_count = tweet_row
+                    reply_count = reply_counts.get(tweet_id, 0)
                 else:
-                    text, created_at = '', ''
+                    text, created_at, favorite_count, retweet_count, reply_count = '', '', 0, 0, 0
                 likes.append({
                     'id': tweet_id,
                     'text': text,
                     'created_at': twitter_date_to_iso(created_at),
-                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                    'metrics': {
+                        'like_count': favorite_count or 0,
+                        'retweet_count': retweet_count or 0,
+                        'reply_count': reply_count
+                    }
                 })
         return likes
     
@@ -365,31 +389,80 @@ class LocalTwitterService:
         """Fetch zero engagement tweets from SQLite DB."""
         zero_engagement_tweets = []
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT id, text, created_at FROM tweets ORDER BY created_at DESC")
-            for row in cursor.fetchall():
-                tweet_id, text, created_at = row
-                zero_engagement_tweets.append({
-                    'id': tweet_id,
-                    'text': text,
-                    'created_at': twitter_date_to_iso(created_at),
-                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
-                })
+            # Get all tweets with their engagement metrics
+            cursor = conn.execute("""
+                SELECT id, text, created_at, conversation_id, author_id, in_reply_to_status_id, in_reply_to_user_id, in_reply_to_screen_name, favorite_count, retweet_count, lang, deleted_at, status
+                FROM tweets
+                ORDER BY created_at DESC
+            """)
+            tweets = cursor.fetchall()
+            # Build a map of tweet_id to reply count
+            reply_counts = {}
+            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
+            for (in_reply_to_status_id,) in reply_cursor.fetchall():
+                if in_reply_to_status_id:
+                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
+            for row in tweets:
+                (
+                    tweet_id, text, created_at, conversation_id, author_id, in_reply_to_status_id, in_reply_to_user_id, in_reply_to_screen_name,
+                    favorite_count, retweet_count, lang, deleted_at, status
+                ) = row
+                reply_count = reply_counts.get(tweet_id, 0)
+                # Only include tweets with zero engagement
+                if (favorite_count or 0) == 0 and (retweet_count or 0) == 0 and reply_count == 0:
+                    zero_engagement_tweets.append({
+                        'id': tweet_id,
+                        'text': text,
+                        'created_at': twitter_date_to_iso(created_at),
+                        'conversation_id': conversation_id,
+                        'author_id': author_id,
+                        'in_reply_to_status_id': in_reply_to_status_id,
+                        'in_reply_to_user_id': in_reply_to_user_id,
+                        'in_reply_to_screen_name': in_reply_to_screen_name,
+                        'lang': lang,
+                        'deleted_at': deleted_at,
+                        'status': status,
+                        'metrics': {
+                            'like_count': favorite_count or 0,
+                            'retweet_count': retweet_count or 0,
+                            'reply_count': reply_count
+                        }
+                    })
         return zero_engagement_tweets
     
     def get_zero_engagement_replies(self) -> List[Dict[str, Any]]:
         """Fetch zero engagement replies from SQLite DB."""
         zero_engagement_replies = []
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT id, text, created_at, in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL ORDER BY created_at DESC")
+            # Get all replies with their engagement metrics
+            cursor = conn.execute("""
+                SELECT id, text, created_at, in_reply_to_status_id, favorite_count, retweet_count
+                FROM tweets
+                WHERE in_reply_to_status_id IS NOT NULL
+                ORDER BY created_at DESC
+            """)
+            # Build a map of tweet_id to reply count
+            reply_counts = {}
+            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
+            for (in_reply_to_status_id,) in reply_cursor.fetchall():
+                if in_reply_to_status_id:
+                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
             for row in cursor.fetchall():
-                reply_id, text, created_at, in_reply_to = row
-                zero_engagement_replies.append({
-                    'id': reply_id,
-                    'text': text,
-                    'created_at': twitter_date_to_iso(created_at),
-                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0},
-                    'in_reply_to': in_reply_to or "Unknown"
-                })
+                reply_id, text, created_at, in_reply_to, favorite_count, retweet_count = row
+                reply_count = reply_counts.get(reply_id, 0)
+                # Only include replies with zero engagement
+                if (favorite_count or 0) == 0 and (retweet_count or 0) == 0 and reply_count == 0:
+                    zero_engagement_replies.append({
+                        'id': reply_id,
+                        'text': text,
+                        'created_at': twitter_date_to_iso(created_at),
+                        'metrics': {
+                            'like_count': favorite_count or 0,
+                            'retweet_count': retweet_count or 0,
+                            'reply_count': reply_count
+                        },
+                        'in_reply_to': in_reply_to or "Unknown"
+                    })
         return zero_engagement_replies
 
 class TwitterService:
@@ -420,14 +493,25 @@ class TwitterService:
         # --- NEW: Fetch tweets from SQLite DB ---
         tweets = []
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT id, text, created_at FROM tweets WHERE author_id = ? ORDER BY created_at DESC", (user_id,))
+            # Build a map of tweet_id to reply count
+            reply_counts = {}
+            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
+            for (in_reply_to_status_id,) in reply_cursor.fetchall():
+                if in_reply_to_status_id:
+                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
+            cursor = conn.execute("SELECT id, text, created_at, favorite_count, retweet_count FROM tweets WHERE author_id = ? ORDER BY created_at DESC", (user_id,))
             for row in cursor.fetchall():
-                tweet_id, text, created_at = row
+                tweet_id, text, created_at, favorite_count, retweet_count = row
+                reply_count = reply_counts.get(tweet_id, 0)
                 tweets.append({
                     'id': tweet_id,
                     'text': text,
                     'created_at': twitter_date_to_iso(created_at),
-                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                    'metrics': {
+                        'like_count': favorite_count or 0,
+                        'retweet_count': retweet_count or 0,
+                        'reply_count': reply_count
+                    }
                 })
         return {'data': tweets, 'meta': {}}
     
@@ -435,21 +519,32 @@ class TwitterService:
         # --- NEW: Fetch likes from SQLite DB ---
         likes = []
         with sqlite3.connect(self.db_path) as conn:
+            # Build a map of tweet_id to reply count
+            reply_counts = {}
+            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
+            for (in_reply_to_status_id,) in reply_cursor.fetchall():
+                if in_reply_to_status_id:
+                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
             cursor = conn.execute("SELECT tweet_id, liked_at FROM likes ORDER BY liked_at DESC LIMIT ?", (count,))
             for row in cursor.fetchall():
                 tweet_id, liked_at = row
-                # Fetch tweet text
-                tweet_cursor = conn.execute("SELECT text, created_at FROM tweets WHERE id = ?", (tweet_id,))
+                # Fetch tweet text and metrics
+                tweet_cursor = conn.execute("SELECT text, created_at, favorite_count, retweet_count FROM tweets WHERE id = ?", (tweet_id,))
                 tweet_row = tweet_cursor.fetchone()
                 if tweet_row:
-                    text, created_at = tweet_row
+                    text, created_at, favorite_count, retweet_count = tweet_row
+                    reply_count = reply_counts.get(tweet_id, 0)
                 else:
-                    text, created_at = '', ''
+                    text, created_at, favorite_count, retweet_count, reply_count = '', '', 0, 0, 0
                 likes.append({
                     'id': tweet_id,
                     'text': text,
                     'created_at': twitter_date_to_iso(created_at),
-                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
+                    'metrics': {
+                        'like_count': favorite_count or 0,
+                        'retweet_count': retweet_count or 0,
+                        'reply_count': reply_count
+                    }
                 })
         return likes
     
@@ -457,31 +552,80 @@ class TwitterService:
         # --- NEW: Fetch zero engagement tweets from SQLite DB ---
         zero_engagement_tweets = []
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT id, text, created_at FROM tweets ORDER BY created_at DESC")
-            for row in cursor.fetchall():
-                tweet_id, text, created_at = row
-                zero_engagement_tweets.append({
-                    'id': tweet_id,
-                    'text': text,
-                    'created_at': twitter_date_to_iso(created_at),
-                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0}
-                })
+            # Get all tweets with their engagement metrics
+            cursor = conn.execute("""
+                SELECT id, text, created_at, conversation_id, author_id, in_reply_to_status_id, in_reply_to_user_id, in_reply_to_screen_name, favorite_count, retweet_count, lang, deleted_at, status
+                FROM tweets
+                ORDER BY created_at DESC
+            """)
+            tweets = cursor.fetchall()
+            # Build a map of tweet_id to reply count
+            reply_counts = {}
+            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
+            for (in_reply_to_status_id,) in reply_cursor.fetchall():
+                if in_reply_to_status_id:
+                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
+            for row in tweets:
+                (
+                    tweet_id, text, created_at, conversation_id, author_id, in_reply_to_status_id, in_reply_to_user_id, in_reply_to_screen_name,
+                    favorite_count, retweet_count, lang, deleted_at, status
+                ) = row
+                reply_count = reply_counts.get(tweet_id, 0)
+                # Only include tweets with zero engagement
+                if (favorite_count or 0) == 0 and (retweet_count or 0) == 0 and reply_count == 0:
+                    zero_engagement_tweets.append({
+                        'id': tweet_id,
+                        'text': text,
+                        'created_at': twitter_date_to_iso(created_at),
+                        'conversation_id': conversation_id,
+                        'author_id': author_id,
+                        'in_reply_to_status_id': in_reply_to_status_id,
+                        'in_reply_to_user_id': in_reply_to_user_id,
+                        'in_reply_to_screen_name': in_reply_to_screen_name,
+                        'lang': lang,
+                        'deleted_at': deleted_at,
+                        'status': status,
+                        'metrics': {
+                            'like_count': favorite_count or 0,
+                            'retweet_count': retweet_count or 0,
+                            'reply_count': reply_count
+                        }
+                    })
         return zero_engagement_tweets
     
     def get_zero_engagement_replies(self) -> List[Dict[str, Any]]:
         # --- NEW: Fetch zero engagement replies from SQLite DB ---
         zero_engagement_replies = []
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT id, text, created_at, in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL ORDER BY created_at DESC")
+            # Get all replies with their engagement metrics
+            cursor = conn.execute("""
+                SELECT id, text, created_at, in_reply_to_status_id, favorite_count, retweet_count
+                FROM tweets
+                WHERE in_reply_to_status_id IS NOT NULL
+                ORDER BY created_at DESC
+            """)
+            # Build a map of tweet_id to reply count
+            reply_counts = {}
+            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
+            for (in_reply_to_status_id,) in reply_cursor.fetchall():
+                if in_reply_to_status_id:
+                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
             for row in cursor.fetchall():
-                reply_id, text, created_at, in_reply_to = row
-                zero_engagement_replies.append({
-                    'id': reply_id,
-                    'text': text,
-                    'created_at': twitter_date_to_iso(created_at),
-                    'metrics': {'like_count': 0, 'retweet_count': 0, 'reply_count': 0},
-                    'in_reply_to': in_reply_to or "Unknown"
-                })
+                reply_id, text, created_at, in_reply_to, favorite_count, retweet_count = row
+                reply_count = reply_counts.get(reply_id, 0)
+                # Only include replies with zero engagement
+                if (favorite_count or 0) == 0 and (retweet_count or 0) == 0 and reply_count == 0:
+                    zero_engagement_replies.append({
+                        'id': reply_id,
+                        'text': text,
+                        'created_at': twitter_date_to_iso(created_at),
+                        'metrics': {
+                            'like_count': favorite_count or 0,
+                            'retweet_count': retweet_count or 0,
+                            'reply_count': reply_count
+                        },
+                        'in_reply_to': in_reply_to or "Unknown"
+                    })
         return zero_engagement_replies
 
 # Dependencies for FastAPI endpoints
@@ -492,6 +636,15 @@ def get_local_twitter_service() -> LocalTwitterService:
 def get_twitter_service(client: TwitterClient = Depends(get_twitter_client)):
     """Dependency to get Twitter service (requires API auth)."""
     return TwitterService(client=client)
+
+# Import the in-memory cache
+from src.memory_cache import cache
+
+@app.on_event("startup")
+async def startup_event():
+    print("\n🚀 [Startup] Loading all Twitter data into in-memory cache...")
+    cache.load_all_data()
+    print(f"✅ [Startup] Cache loaded. Stats: {cache.get_stats()}")
 
 # FastAPI endpoints
 @app.get("/health")
@@ -542,12 +695,17 @@ async def get_profile(service: LocalTwitterService = Depends(get_local_twitter_s
             if account_row:
                 user_id, username, display_name, created_at = account_row
             else:
-                # Fallback: Since this is a personal archive, create a default profile
-                # Use "pietertypes" as the username based on the greeting in the original design
                 user_id = "unknown"
                 username = "pietertypes"
                 display_name = "Pieter"
                 created_at = "2024-01-01"
+            # Fetch avatar_url and other profile info
+            cursor = conn.execute("SELECT avatar_url, header_url, bio, website, location FROM profile WHERE account_id = ? LIMIT 1", (user_id,))
+            profile_row = cursor.fetchone()
+            if profile_row:
+                avatar_url, header_url, bio, website, location = profile_row
+            else:
+                avatar_url = header_url = bio = website = location = None
             
             # Get tweet count (all tweets in personal archive are yours)
             cursor = conn.execute("SELECT COUNT(*) FROM tweets")
@@ -571,6 +729,11 @@ async def get_profile(service: LocalTwitterService = Depends(get_local_twitter_s
                 "username": username,
                 "display_name": display_name,
                 "created_at": created_at,
+                "avatar_url": avatar_url,
+                "header_url": header_url,
+                "bio": bio,
+                "website": website,
+                "location": location,
                 "stats": {
                     "tweet_count": tweet_count,
                     "like_count": like_count,
@@ -606,17 +769,26 @@ async def get_likes(
 # Add new endpoints for zero engagement tweets and replies
 @app.get("/api/tweets/zero-engagement", response_model=List[Tweet])
 async def get_zero_engagement_tweets(
-    service: LocalTwitterService = Depends(get_local_twitter_service)
+    service: LocalTwitterService = Depends(get_local_twitter_service),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0)
 ):
-    """Get tweets with zero engagement."""
-    return service.get_zero_engagement_tweets()
+    """Get tweets with zero engagement, paginated."""
+    tweets = service.get_zero_engagement_tweets()
+    # Sort by created_at DESC, then paginate
+    tweets_sorted = sorted(tweets, key=lambda t: t['created_at'], reverse=True)
+    return tweets_sorted[offset:offset+limit]
 
 @app.get("/api/replies/zero-engagement", response_model=List[Tweet])
 async def get_zero_engagement_replies(
-    service: LocalTwitterService = Depends(get_local_twitter_service)
+    service: LocalTwitterService = Depends(get_local_twitter_service),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0)
 ):
-    """Get replies with zero engagement."""
-    return service.get_zero_engagement_replies()
+    """Get replies with zero engagement, paginated."""
+    replies = service.get_zero_engagement_replies()
+    replies_sorted = sorted(replies, key=lambda t: t['created_at'], reverse=True)
+    return replies_sorted[offset:offset+limit]
 
 @app.get("/api/test-auth", response_model=AuthStatus)
 async def test_authentication(
@@ -693,6 +865,78 @@ async def test_authentication(
             can_fetch_data=False,
             auth_steps=auth_steps,
         )
+
+@app.get("/api/following")
+async def get_following(service: LocalTwitterService = Depends(get_local_twitter_service)):
+    """Get accounts the user is following."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT u.id, u.username, u.display_name, u.user_link
+                FROM users u
+                JOIN following f ON u.id = f.accountId
+            """)
+            following = [
+                {
+                    "id": row[0],
+                    "username": row[1],
+                    "display_name": row[2],
+                    "avatar_url": None  # Optionally add avatar if available
+                }
+                for row in cursor.fetchall()
+            ]
+        return following
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/followers")
+async def get_followers(service: LocalTwitterService = Depends(get_local_twitter_service)):
+    """Get accounts that follow the user."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT u.id, u.username, u.display_name, u.user_link
+                FROM users u
+                JOIN follower f ON u.id = f.accountId
+            """)
+            followers = [
+                {
+                    "id": row[0],
+                    "username": row[1],
+                    "display_name": row[2],
+                    "avatar_url": None  # Optionally add avatar if available
+                }
+                for row in cursor.fetchall()
+            ]
+        return followers
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/tweet/delete")
+async def delete_tweet(
+    tweet_id: str = Body(..., embed=True),
+    service: TwitterService = Depends(get_twitter_service)
+):
+    """Delete a tweet via X API, then mark as deleted in the local DB if successful."""
+    try:
+        # Delete from X API (Twitter)
+        client = service.client.client
+        resp = client.delete_tweet(tweet_id)
+        if resp and (getattr(resp, 'data', None) and resp.data.get('deleted')):
+            # Mark as deleted in local DB
+            with sqlite3.connect(service.db_path) as conn:
+                conn.execute("UPDATE tweets SET status = 'deleted' WHERE id = ?", (tweet_id,))
+                conn.commit()
+            return {"success": True, "message": "Tweet deleted on X and marked as deleted locally."}
+        else:
+            return {"success": False, "message": "Failed to delete tweet on X. Not marked as deleted locally."}
+    except Exception as e:
+        return {"success": False, "message": f"Error: {str(e)}"}
+
+@app.get("/api/bookmarks")
+async def get_bookmarks():
+    """Bookmarks are not supported yet. Placeholder endpoint."""
+    return []
 
 # CLI functionality
 def main():

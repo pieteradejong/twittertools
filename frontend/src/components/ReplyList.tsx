@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { Tweet } from './Tweet';
+import { useQuery as useProfileQuery } from '@tanstack/react-query';
 
 interface ReplyData {
   id: string;
@@ -36,6 +37,17 @@ export function ReplyList({ isActive }: ReplyListProps) {
     refetchOnWindowFocus: false,
     refetchInterval: false,
   });
+
+  // Fetch profile for username
+  const { data: profile } = useProfileQuery({
+    queryKey: ['profile'],
+    queryFn: async () => {
+      const { data } = await axios.get('http://localhost:8000/api/profile');
+      return data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const profileUsername = profile?.username;
 
   if (!isActive) return null;
 
@@ -98,6 +110,7 @@ export function ReplyList({ isActive }: ReplyListProps) {
                   text={reply.text}
                   created_at={reply.created_at}
                   metrics={reply.metrics}
+                  profileUsername={profileUsername}
                   onDelete={(id) => {
                     // TODO: Implement delete functionality
                     console.log('Delete reply:', id);
