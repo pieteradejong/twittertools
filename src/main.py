@@ -59,7 +59,7 @@ app.add_middleware(
 class Tweet(BaseModel):
     id: str
     text: str
-    created_at: datetime
+    created_at: Optional[datetime] = None
     metrics: Dict[str, int]
 
 class UserInfo(BaseModel):
@@ -301,11 +301,13 @@ def get_twitter_client() -> TwitterClient:
 
 def twitter_date_to_iso(date_str):
     """Convert Twitter date string to ISO 8601 format."""
+    if not date_str or date_str.strip() == '':
+        return None
     try:
         dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %z %Y")
         return dt.isoformat()
     except Exception:
-        return date_str  # fallback if already ISO or invalid
+        return None  # Return None for invalid dates
 
 class LocalTwitterService:
     """Service class for local Twitter data operations (no API required)."""
@@ -352,35 +354,21 @@ class LocalTwitterService:
                 })
         return {'data': tweets, 'meta': {}}
     
-    def get_recent_likes(self, count: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_likes(self, count: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
         """Fetch likes from SQLite DB."""
         likes = []
         with sqlite3.connect(self.db_path) as conn:
-            # Build a map of tweet_id to reply count
-            reply_counts = {}
-            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
-            for (in_reply_to_status_id,) in reply_cursor.fetchall():
-                if in_reply_to_status_id:
-                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
-            cursor = conn.execute("SELECT tweet_id, liked_at FROM likes ORDER BY liked_at DESC LIMIT ?", (count,))
+            cursor = conn.execute("SELECT tweet_id, full_text, liked_at FROM likes ORDER BY rowid DESC LIMIT ? OFFSET ?", (count, offset))
             for row in cursor.fetchall():
-                tweet_id, liked_at = row
-                # Fetch tweet text and metrics
-                tweet_cursor = conn.execute("SELECT text, created_at, favorite_count, retweet_count FROM tweets WHERE id = ?", (tweet_id,))
-                tweet_row = tweet_cursor.fetchone()
-                if tweet_row:
-                    text, created_at, favorite_count, retweet_count = tweet_row
-                    reply_count = reply_counts.get(tweet_id, 0)
-                else:
-                    text, created_at, favorite_count, retweet_count, reply_count = '', '', 0, 0, 0
+                tweet_id, full_text, liked_at = row
                 likes.append({
                     'id': tweet_id,
-                    'text': text,
-                    'created_at': twitter_date_to_iso(created_at),
+                    'text': full_text or '',
+                    'created_at': twitter_date_to_iso(liked_at),
                     'metrics': {
-                        'like_count': favorite_count or 0,
-                        'retweet_count': retweet_count or 0,
-                        'reply_count': reply_count
+                        'like_count': 0,  # We don't have metrics for liked tweets
+                        'retweet_count': 0,
+                        'reply_count': 0
                     }
                 })
         return likes
@@ -465,6 +453,51 @@ class LocalTwitterService:
                     })
         return zero_engagement_replies
 
+    def get_bookmarks(self, count: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get bookmarks from local database."""
+        try:
+            logger.info(f"Fetching bookmarks with count={count}, offset={offset}")
+            with sqlite3.connect(self.db_path) as conn:
+                # Check if bookmarks table exists and has data
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookmarks'")
+                if not cursor.fetchone():
+                    logger.info("Bookmarks table does not exist")
+                    return []
+                
+                cursor = conn.execute("""
+                    SELECT id, text, created_at, author_id
+                    FROM bookmarks
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                """, (count, offset))
+                
+                bookmarks = []
+                rows = cursor.fetchall()
+                logger.info(f"Found {len(rows)} bookmarks in database")
+                
+                for row in rows:
+                    bookmark = {
+                        'id': row[0] or '',
+                        'text': row[1] or '',
+                        'created_at': twitter_date_to_iso(row[2]) if row[2] else None,
+                        'author_id': row[3] or '',
+                        'metrics': {
+                            'like_count': 0,  # Bookmarks don't have engagement metrics
+                            'retweet_count': 0,
+                            'reply_count': 0,
+                            'quote_count': 0
+                        }
+                    }
+                    bookmarks.append(bookmark)
+                
+                logger.info(f"Returning {len(bookmarks)} bookmarks")
+                return bookmarks
+        except Exception as e:
+            logger.error(f"Error fetching bookmarks: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return []
+
 class TwitterService:
     """Service class for Twitter operations (requires API authentication)."""
     
@@ -515,35 +548,21 @@ class TwitterService:
                 })
         return {'data': tweets, 'meta': {}}
     
-    def get_recent_likes(self, count: int = 10) -> List[Dict[str, Any]]:
-        # --- NEW: Fetch likes from SQLite DB ---
+    def get_recent_likes(self, count: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+        """Fetch likes from SQLite DB."""
         likes = []
         with sqlite3.connect(self.db_path) as conn:
-            # Build a map of tweet_id to reply count
-            reply_counts = {}
-            reply_cursor = conn.execute("SELECT in_reply_to_status_id FROM tweets WHERE in_reply_to_status_id IS NOT NULL")
-            for (in_reply_to_status_id,) in reply_cursor.fetchall():
-                if in_reply_to_status_id:
-                    reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
-            cursor = conn.execute("SELECT tweet_id, liked_at FROM likes ORDER BY liked_at DESC LIMIT ?", (count,))
+            cursor = conn.execute("SELECT tweet_id, full_text, liked_at FROM likes ORDER BY rowid DESC LIMIT ? OFFSET ?", (count, offset))
             for row in cursor.fetchall():
-                tweet_id, liked_at = row
-                # Fetch tweet text and metrics
-                tweet_cursor = conn.execute("SELECT text, created_at, favorite_count, retweet_count FROM tweets WHERE id = ?", (tweet_id,))
-                tweet_row = tweet_cursor.fetchone()
-                if tweet_row:
-                    text, created_at, favorite_count, retweet_count = tweet_row
-                    reply_count = reply_counts.get(tweet_id, 0)
-                else:
-                    text, created_at, favorite_count, retweet_count, reply_count = '', '', 0, 0, 0
+                tweet_id, full_text, liked_at = row
                 likes.append({
                     'id': tweet_id,
-                    'text': text,
-                    'created_at': twitter_date_to_iso(created_at),
+                    'text': full_text or '',
+                    'created_at': twitter_date_to_iso(liked_at),
                     'metrics': {
-                        'like_count': favorite_count or 0,
-                        'retweet_count': retweet_count or 0,
-                        'reply_count': reply_count
+                        'like_count': 0,  # We don't have metrics for liked tweets
+                        'retweet_count': 0,
+                        'reply_count': 0
                     }
                 })
         return likes
@@ -628,6 +647,88 @@ class TwitterService:
                     })
         return zero_engagement_replies
 
+    def get_bookmarks(self, count: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get bookmarks from local database."""
+        try:
+            logger.info(f"Fetching bookmarks with count={count}, offset={offset}")
+            with sqlite3.connect(self.db_path) as conn:
+                # Check if bookmarks table exists and has data
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookmarks'")
+                if not cursor.fetchone():
+                    logger.info("Bookmarks table does not exist")
+                    return []
+                
+                cursor = conn.execute("""
+                    SELECT id, text, created_at, author_id
+                    FROM bookmarks
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                """, (count, offset))
+                
+                bookmarks = []
+                rows = cursor.fetchall()
+                logger.info(f"Found {len(rows)} bookmarks in database")
+                
+                for row in rows:
+                    bookmark = {
+                        'id': row[0] or '',
+                        'text': row[1] or '',
+                        'created_at': twitter_date_to_iso(row[2]) if row[2] else None,
+                        'author_id': row[3] or '',
+                        'metrics': {
+                            'like_count': 0,  # Bookmarks don't have engagement metrics
+                            'retweet_count': 0,
+                            'reply_count': 0,
+                            'quote_count': 0
+                        }
+                    }
+                    bookmarks.append(bookmark)
+                
+                logger.info(f"Returning {len(bookmarks)} bookmarks")
+                return bookmarks
+        except Exception as e:
+            logger.error(f"Error fetching bookmarks: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return []
+
+    def fetch_bookmarks_from_api(self, user_id: str, max_results: int = 100) -> List[Dict[str, Any]]:
+        """Fetch bookmarks from Twitter API and cache them."""
+        try:
+            # Use the Twitter API to fetch bookmarks
+            response = self.client.client.get_bookmarks(
+                user_id=user_id,
+                max_results=max_results,
+                tweet_fields=['created_at', 'author_id', 'public_metrics', 'text']
+            )
+            
+            bookmarks = []
+            if response.data:
+                for tweet in response.data:
+                    bookmark = {
+                        'id': tweet.id,
+                        'text': tweet.text,
+                        'created_at': tweet.created_at.isoformat() if tweet.created_at else None,
+                        'author_id': tweet.author_id,
+                        'metrics': {
+                            'like_count': getattr(tweet.public_metrics, 'like_count', 0) if hasattr(tweet, 'public_metrics') else 0,
+                            'retweet_count': getattr(tweet.public_metrics, 'retweet_count', 0) if hasattr(tweet, 'public_metrics') else 0,
+                            'reply_count': getattr(tweet.public_metrics, 'reply_count', 0) if hasattr(tweet, 'public_metrics') else 0,
+                            'quote_count': getattr(tweet.public_metrics, 'quote_count', 0) if hasattr(tweet, 'public_metrics') else 0
+                        }
+                    }
+                    bookmarks.append(bookmark)
+                
+                # Cache the bookmarks
+                self.cache.bulk_set_bookmarks(bookmarks)
+                logger.info(f"Fetched and cached {len(bookmarks)} bookmarks from API")
+            
+            return bookmarks
+            
+        except tweepy.TweepyException as e:
+            logger.error(f"Error fetching bookmarks from API: {str(e)}")
+            return []
+
 # Dependencies for FastAPI endpoints
 def get_local_twitter_service() -> LocalTwitterService:
     """Dependency to get local Twitter service (no API auth required)."""
@@ -695,7 +796,13 @@ async def get_profile(service: LocalTwitterService = Depends(get_local_twitter_s
             if account_row:
                 user_id, username, display_name, created_at = account_row
             else:
-                user_id = "unknown"
+                # If account table is empty, try to get user_id from tweets
+                cursor = conn.execute("SELECT DISTINCT author_id FROM tweets LIMIT 1")
+                tweet_author = cursor.fetchone()
+                if tweet_author:
+                    user_id = tweet_author[0]
+                else:
+                    user_id = "unknown"
                 username = "pietertypes"
                 display_name = "Pieter"
                 created_at = "2024-01-01"
@@ -719,6 +826,48 @@ async def get_profile(service: LocalTwitterService = Depends(get_local_twitter_s
             cursor = conn.execute("SELECT COUNT(*) FROM tweets WHERE in_reply_to_status_id IS NOT NULL AND in_reply_to_status_id != ''")
             reply_count = cursor.fetchone()[0]
             
+            # Get bookmarks count
+            try:
+                cursor = conn.execute("SELECT COUNT(*) FROM bookmarks")
+                bookmark_count = cursor.fetchone()[0]
+            except:
+                bookmark_count = 0
+            
+            # Get blocks count
+            try:
+                cursor = conn.execute("SELECT COUNT(*) FROM blocks")
+                blocks_count = cursor.fetchone()[0]
+            except:
+                blocks_count = 0
+            
+            # Get mutes count
+            try:
+                cursor = conn.execute("SELECT COUNT(*) FROM mutes")
+                mutes_count = cursor.fetchone()[0]
+            except:
+                mutes_count = 0
+            
+            # Get direct messages count
+            try:
+                cursor = conn.execute("SELECT COUNT(*) FROM direct_messages")
+                dm_count = cursor.fetchone()[0]
+            except:
+                dm_count = 0
+            
+            # Get lists count
+            try:
+                cursor = conn.execute("SELECT COUNT(*) FROM lists")
+                lists_count = cursor.fetchone()[0]
+            except:
+                lists_count = 0
+            
+            # Get following count
+            try:
+                cursor = conn.execute("SELECT COUNT(*) FROM users")
+                following_count = cursor.fetchone()[0]
+            except:
+                following_count = 0
+            
             # For zero engagement, we'll use the same counts since we don't have engagement metrics
             # In a real implementation, you'd filter by engagement metrics
             zero_engagement_tweets = tweet_count
@@ -737,7 +886,13 @@ async def get_profile(service: LocalTwitterService = Depends(get_local_twitter_s
                 "stats": {
                     "tweet_count": tweet_count,
                     "like_count": like_count,
+                    "bookmark_count": bookmark_count,
                     "reply_count": reply_count,
+                    "blocks_count": blocks_count,
+                    "mutes_count": mutes_count,
+                    "dm_count": dm_count,
+                    "lists_count": lists_count,
+                    "following_count": following_count,
                     "zero_engagement_tweets": zero_engagement_tweets,
                     "zero_engagement_replies": zero_engagement_replies
                 }
@@ -760,11 +915,12 @@ async def get_me(service: TwitterService = Depends(get_twitter_service)):
 
 @app.get("/api/likes", response_model=List[Tweet])
 async def get_likes(
-    count: int = 10,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     service: LocalTwitterService = Depends(get_local_twitter_service)
 ):
     """Get recent likes for authenticated user."""
-    return service.get_recent_likes(count)
+    return service.get_recent_likes(count=limit, offset=offset)
 
 # Add new endpoints for zero engagement tweets and replies
 @app.get("/api/tweets/zero-engagement", response_model=List[Tweet])
@@ -872,9 +1028,9 @@ async def get_following(service: LocalTwitterService = Depends(get_local_twitter
     try:
         with sqlite3.connect(service.db_path) as conn:
             cursor = conn.execute("""
-                SELECT u.id, u.username, u.display_name, u.user_link
-                FROM users u
-                JOIN following f ON u.id = f.accountId
+                SELECT id, username, display_name, user_link
+                FROM users
+                ORDER BY display_name
             """)
             following = [
                 {
@@ -895,9 +1051,9 @@ async def get_followers(service: LocalTwitterService = Depends(get_local_twitter
     try:
         with sqlite3.connect(service.db_path) as conn:
             cursor = conn.execute("""
-                SELECT u.id, u.username, u.display_name, u.user_link
-                FROM users u
-                JOIN follower f ON u.id = f.accountId
+                SELECT id, username, display_name, user_link
+                FROM users
+                ORDER BY display_name
             """)
             followers = [
                 {
@@ -933,10 +1089,146 @@ async def delete_tweet(
     except Exception as e:
         return {"success": False, "message": f"Error: {str(e)}"}
 
-@app.get("/api/bookmarks")
-async def get_bookmarks():
-    """Bookmarks are not supported yet. Placeholder endpoint."""
-    return []
+@app.get("/api/bookmarks", response_model=List[Tweet])
+async def get_bookmarks(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Get bookmarks for authenticated user."""
+    logger.info(f"Fetching bookmarks with count={limit}, offset={offset}")
+    return service.get_bookmarks(count=limit, offset=offset)
+
+@app.get("/api/blocks")
+async def get_blocks(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Get blocked users."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT user_id, user_link
+                FROM blocks
+                ORDER BY user_id
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            
+            blocks = []
+            for row in cursor.fetchall():
+                blocks.append({
+                    "user_id": row[0],
+                    "user_link": row[1],
+                    "username": row[1].split('/')[-1] if row[1] else row[0]  # Extract username from link
+                })
+            
+            return blocks
+    except Exception as e:
+        logger.error(f"Error fetching blocks: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/mutes")
+async def get_mutes(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Get muted users."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT user_id, user_link
+                FROM mutes
+                ORDER BY user_id
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            
+            mutes = []
+            for row in cursor.fetchall():
+                mutes.append({
+                    "user_id": row[0],
+                    "user_link": row[1],
+                    "username": row[1].split('/')[-1] if row[1] else row[0]  # Extract username from link
+                })
+            
+            return mutes
+    except Exception as e:
+        logger.error(f"Error fetching mutes: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/direct-messages")
+async def get_direct_messages(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Get direct messages."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            # Check if direct_messages table exists
+            cursor = conn.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='direct_messages'
+            """)
+            
+            if not cursor.fetchone():
+                return []  # Table doesn't exist, return empty list
+            
+            cursor = conn.execute("""
+                SELECT message_id, conversation_id, sender_id, recipient_id, 
+                       text, created_at, media_url
+                FROM direct_messages
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            
+            messages = []
+            for row in cursor.fetchall():
+                messages.append({
+                    "message_id": row[0],
+                    "conversation_id": row[1],
+                    "sender_id": row[2],
+                    "recipient_id": row[3],
+                    "text": row[4],
+                    "created_at": row[5],
+                    "media_url": row[6]
+                })
+            
+            return messages
+    except Exception as e:
+        logger.error(f"Error fetching direct messages: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/lists")
+async def get_lists(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Get Twitter lists."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, name, url, type
+                FROM lists
+                ORDER BY name
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            
+            lists = []
+            for row in cursor.fetchall():
+                lists.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "url": row[2],
+                    "type": row[3]
+                })
+            
+            return lists
+    except Exception as e:
+        logger.error(f"Error fetching lists: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # CLI functionality
 def main():
