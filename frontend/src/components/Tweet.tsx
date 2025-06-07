@@ -13,16 +13,48 @@ export interface TweetProps {
     username?: string;
     verified?: boolean;
   };
+  author?: {
+    id?: string;
+    username?: string;
+    display_name?: string;
+    avatar_url?: string;
+    verified?: boolean;
+  };
   media?: { url: string; type: string }[];
-  profileUsername?: string;
   id?: string;
+  semantic_score?: number;
+  topic?: string;
+  similarity_score?: number;
 }
 
-export function Tweet({ text, created_at, metrics, user, media, profileUsername, id }: TweetProps) {
-  const displayName = user?.display_name || 'You';
-  const username = user?.username ? user.username : (profileUsername || 'you');
-  const isVerified = user?.verified ?? true;
-  const avatarUrl = user?.avatar_url || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png';
+export function Tweet({ text, created_at, metrics, user, author, media, id, semantic_score, topic, similarity_score }: TweetProps) {
+  // Prefer author info (for liked tweets) over user info (for own tweets)
+  const authorInfo = author || user;
+  
+  // Determine display name and username based on available author information
+  let displayName: string;
+  let username: string;
+  
+  if (authorInfo?.username && authorInfo?.display_name) {
+    // We have proper author information
+    displayName = authorInfo.display_name;
+    username = authorInfo.username;
+  } else if (authorInfo?.username) {
+    // We have username but no display name
+    displayName = authorInfo.username;
+    username = authorInfo.username;
+  } else if (authorInfo?.display_name && authorInfo.display_name !== 'Unknown User') {
+    // We have display name but no username
+    displayName = authorInfo.display_name;
+    username = 'unknown';
+  } else {
+    // No proper author info available
+    displayName = 'Unknown Author';
+    username = 'unknown';
+  }
+  
+  const isVerified = authorInfo?.verified ?? false;
+  const avatarUrl = authorInfo?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=1da1f2&color=fff&size=40`;
   
   // Format timestamp as 'x years, y months, z days ago'
   const formatTimestamp = (dateString: string) => {
@@ -89,6 +121,27 @@ export function Tweet({ text, created_at, metrics, user, media, profileUsername,
           <div className="text-gray-900 mb-3 whitespace-pre-wrap break-words">
             {text}
           </div>
+          
+          {/* Semantic Classification Info */}
+          {(semantic_score || similarity_score || topic) && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {topic && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                  {topic}
+                </span>
+              )}
+              {semantic_score && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  Score: {semantic_score.toFixed(3)}
+                </span>
+              )}
+              {similarity_score && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                  Similarity: {similarity_score.toFixed(3)}
+                </span>
+              )}
+            </div>
+          )}
           
           {/* Media */}
           {media && media.length > 0 && (
@@ -160,14 +213,16 @@ export function Tweet({ text, created_at, metrics, user, media, profileUsername,
       {/* Management Panel */}
       <div className="mt-4 flex justify-start">
         {/* Only show if username and tweet id are available */}
-        <a
-          href={`https://twitter.com/${profileUsername}/status/${id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-block px-4 py-2 bg-blue-100 text-blue-700 rounded-full font-semibold shadow hover:bg-blue-200 transition-colors text-sm"
-        >
-          View on Twitter
-        </a>
+        {(username && username !== 'unknown' && id) && (
+          <a
+            href={`https://twitter.com/${username}/status/${id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block px-4 py-2 bg-blue-100 text-blue-700 rounded-full font-semibold shadow hover:bg-blue-200 transition-colors text-sm"
+          >
+            View on Twitter
+          </a>
+        )}
       </div>
     </div>
   );

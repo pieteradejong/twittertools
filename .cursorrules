@@ -1,7 +1,14 @@
 # Cursor Project Rules for twittertools
 
 Project goal: side project that fetches all of my twitter activity, e.g.tweets, replies etc.
-and then react vite frond end that allows me to perform certain actions e.g. delete tweets
+and then react vite frontend that allows me to perform certain actions e.g. delete tweets
+
+## Current Features
+- Semantic tweet classification using Sentence Transformers (all-MiniLM-L6-v2)
+- Multi-label topic filtering with configurable thresholds
+- Zero-shot classification (no training data required)
+- React frontend with Tailwind CSS + Headless UI for semantic filtering
+- FastAPI backend with classification endpoints
 
 
 
@@ -16,4 +23,8 @@ and then react vite frond end that allows me to perform certain actions e.g. del
 - If in doubt, ask for explicit user consent before storing any new type of data.
 - All new features should include a note in the README if they affect data storage or caching.
 - All new frontend UI must use Tailwind CSS and Headless UI (not Mantine).
-- The migration from Mantine to Tailwind CSS + Headless UI is complete. 
+- The migration from Mantine to Tailwind CSS + Headless UI is complete.
+- For semantic classification features, use the existing SemanticTweetClassifier class in src/semantic_classifier.py
+- New topics should be added to the TOPIC_DEFINITIONS in semantic_classifier.py with appropriate seed phrases
+- Classification results are stored in the classifications table with proper indexing
+- Frontend semantic features should integrate with the SemanticLikesFilter component 

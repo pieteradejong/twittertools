@@ -20,6 +20,7 @@ from src.settings import get_settings
 from src.cache import TwitterCache, AuthCache
 import time
 import sqlite3
+import json
 
 # Set up logging centrally (always INFO for startup)
 logging.basicConfig(
@@ -56,11 +57,19 @@ app.add_middleware(
 )
 
 # Pydantic models for API
+class Author(BaseModel):
+    id: Optional[str] = None
+    username: Optional[str] = None
+    display_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    verified: bool = False
+
 class Tweet(BaseModel):
     id: str
     text: str
     created_at: Optional[datetime] = None
     metrics: Dict[str, int]
+    author: Optional[Author] = None
 
 class UserInfo(BaseModel):
     username: str
@@ -355,16 +364,24 @@ class LocalTwitterService:
         return {'data': tweets, 'meta': {}}
     
     def get_recent_likes(self, count: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
-        """Fetch likes from SQLite DB."""
+        """Fetch likes from SQLite DB with author information."""
         likes = []
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT tweet_id, full_text, liked_at FROM likes ORDER BY rowid DESC LIMIT ? OFFSET ?", (count, offset))
+            cursor = conn.execute("""
+                SELECT tweet_id, full_text, liked_at, author_id, author_username 
+                FROM likes 
+                ORDER BY rowid DESC 
+                LIMIT ? OFFSET ?
+            """, (count, offset))
+            
             for row in cursor.fetchall():
-                tweet_id, full_text, liked_at = row
+                tweet_id, full_text, liked_at, author_id, author_username = row
                 likes.append({
                     'id': tweet_id,
                     'text': full_text or '',
                     'created_at': twitter_date_to_iso(liked_at),
+                    'author_id': author_id,
+                    'author_username': author_username,
                     'metrics': {
                         'like_count': 0,  # We don't have metrics for liked tweets
                         'retweet_count': 0,
@@ -919,8 +936,17 @@ async def get_likes(
     offset: int = Query(0, ge=0),
     service: LocalTwitterService = Depends(get_local_twitter_service)
 ):
-    """Get recent likes for authenticated user."""
-    return service.get_recent_likes(count=limit, offset=offset)
+    """Get recent likes for authenticated user with author information."""
+    from .tweet_enrichment_service import TweetEnrichmentService
+    
+    # Get basic likes data
+    likes = service.get_recent_likes(count=limit, offset=offset)
+    
+    # Enrich with author information from Twitter API
+    enrichment_service = TweetEnrichmentService(service.db_path)
+    enriched_likes = enrichment_service.enrich_likes_batch(likes)
+    
+    return enriched_likes
 
 # Add new endpoints for zero engagement tweets and replies
 @app.get("/api/tweets/zero-engagement", response_model=List[Tweet])
@@ -1023,48 +1049,152 @@ async def test_authentication(
         )
 
 @app.get("/api/following")
-async def get_following(service: LocalTwitterService = Depends(get_local_twitter_service)):
+async def get_following(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
     """Get accounts the user is following."""
     try:
         with sqlite3.connect(service.db_path) as conn:
+            # Get current user ID
+            cursor = conn.execute("SELECT account_id FROM account LIMIT 1")
+            user_row = cursor.fetchone()
+            if not user_row:
+                raise HTTPException(status_code=404, detail="User account not found")
+            user_id = user_row[0]
+            
+            # Get following relationships with user details
             cursor = conn.execute("""
-                SELECT id, username, display_name, user_link
-                FROM users
-                ORDER BY display_name
-            """)
-            following = [
-                {
+                SELECT 
+                    r.target_user_id,
+                    COALESCE(uc.username, u.username) as username,
+                    COALESCE(uc.name, u.display_name) as display_name,
+                    u.user_link,
+                    uc.profile_image_url,
+                    uc.verified,
+                    uc.public_metrics,
+                    r.created_at as relationship_created_at
+                FROM relationships r
+                LEFT JOIN users u ON r.target_user_id = u.id
+                LEFT JOIN users_comprehensive uc ON r.target_user_id = uc.id
+                WHERE r.source_user_id = ? AND r.relationship_type = 'following'
+                ORDER BY COALESCE(uc.name, u.display_name), r.target_user_id
+                LIMIT ? OFFSET ?
+            """, (user_id, limit, offset))
+            
+            following = []
+            for row in cursor.fetchall():
+                # Parse public metrics if available
+                public_metrics = {}
+                if row[6]:  # public_metrics column
+                    try:
+                        import json
+                        public_metrics = json.loads(row[6])
+                    except:
+                        pass
+                
+                following.append({
                     "id": row[0],
-                    "username": row[1],
-                    "display_name": row[2],
-                    "avatar_url": None  # Optionally add avatar if available
-                }
-                for row in cursor.fetchall()
-            ]
-        return following
+                    "username": row[1] or f"user_{row[0][-8:]}",
+                    "display_name": row[2] or f"User {row[0][-8:]}",
+                    "user_link": row[3],
+                    "avatar_url": row[4],  # profile_image_url from comprehensive table
+                    "verified": bool(row[5]) if row[5] is not None else False,
+                    "follower_count": public_metrics.get('followers_count'),
+                    "following_count": public_metrics.get('following_count'),
+                    "tweet_count": public_metrics.get('tweet_count'),
+                    "relationship_created_at": row[7]
+                })
+            
+            # Get total count
+            cursor = conn.execute("""
+                SELECT COUNT(*) FROM relationships 
+                WHERE source_user_id = ? AND relationship_type = 'following'
+            """, (user_id,))
+            total_count = cursor.fetchone()[0]
+            
+            return {
+                "following": following,
+                "total_count": total_count,
+                "limit": limit,
+                "offset": offset
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/followers")
-async def get_followers(service: LocalTwitterService = Depends(get_local_twitter_service)):
+async def get_followers(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
     """Get accounts that follow the user."""
     try:
         with sqlite3.connect(service.db_path) as conn:
+            # Get current user ID
+            cursor = conn.execute("SELECT account_id FROM account LIMIT 1")
+            user_row = cursor.fetchone()
+            if not user_row:
+                raise HTTPException(status_code=404, detail="User account not found")
+            user_id = user_row[0]
+            
+            # Get follower relationships with user details
             cursor = conn.execute("""
-                SELECT id, username, display_name, user_link
-                FROM users
-                ORDER BY display_name
-            """)
-            followers = [
-                {
+                SELECT 
+                    r.source_user_id,
+                    COALESCE(uc.username, u.username) as username,
+                    COALESCE(uc.name, u.display_name) as display_name,
+                    u.user_link,
+                    uc.profile_image_url,
+                    uc.verified,
+                    uc.public_metrics,
+                    r.created_at as relationship_created_at
+                FROM relationships r
+                LEFT JOIN users u ON r.source_user_id = u.id
+                LEFT JOIN users_comprehensive uc ON r.source_user_id = uc.id
+                WHERE r.target_user_id = ? AND r.relationship_type = 'follower'
+                ORDER BY COALESCE(uc.name, u.display_name), r.source_user_id
+                LIMIT ? OFFSET ?
+            """, (user_id, limit, offset))
+            
+            followers = []
+            for row in cursor.fetchall():
+                # Parse public metrics if available
+                public_metrics = {}
+                if row[6]:  # public_metrics column
+                    try:
+                        import json
+                        public_metrics = json.loads(row[6])
+                    except:
+                        pass
+                
+                followers.append({
                     "id": row[0],
-                    "username": row[1],
-                    "display_name": row[2],
-                    "avatar_url": None  # Optionally add avatar if available
-                }
-                for row in cursor.fetchall()
-            ]
-        return followers
+                    "username": row[1] or f"user_{row[0][-8:]}",
+                    "display_name": row[2] or f"User {row[0][-8:]}",
+                    "user_link": row[3],
+                    "avatar_url": row[4],  # profile_image_url from comprehensive table
+                    "verified": bool(row[5]) if row[5] is not None else False,
+                    "follower_count": public_metrics.get('followers_count'),
+                    "following_count": public_metrics.get('following_count'),
+                    "tweet_count": public_metrics.get('tweet_count'),
+                    "relationship_created_at": row[7]
+                })
+            
+            # Get total count
+            cursor = conn.execute("""
+                SELECT COUNT(*) FROM relationships 
+                WHERE target_user_id = ? AND relationship_type = 'follower'
+            """, (user_id,))
+            total_count = cursor.fetchone()[0]
+            
+            return {
+                "followers": followers,
+                "total_count": total_count,
+                "limit": limit,
+                "offset": offset
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1098,6 +1228,213 @@ async def get_bookmarks(
     """Get bookmarks for authenticated user."""
     logger.info(f"Fetching bookmarks with count={limit}, offset={offset}")
     return service.get_bookmarks(count=limit, offset=offset)
+
+# Semantic filtering endpoints
+@app.get("/api/likes/topics")
+async def get_available_topics():
+    """Get all available topics with their tweet counts."""
+    try:
+        from .semantic_classifier import SemanticTweetClassifier
+        classifier = SemanticTweetClassifier()
+        topics = classifier.get_available_topics()
+        return {"topics": topics}
+    except Exception as e:
+        logger.error(f"Error getting topics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/likes/by-topic/{topic}")
+async def get_likes_by_topic(
+    topic: str,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    min_score: float = Query(0.3, ge=0.0, le=1.0)
+):
+    """Get likes filtered by semantic topic."""
+    try:
+        from .semantic_classifier import SemanticTweetClassifier
+        classifier = SemanticTweetClassifier()
+        results = classifier.get_tweets_by_topic(topic, min_score, limit, offset)
+        
+        # Convert to Tweet format
+        tweets = []
+        for result in results:
+            tweets.append({
+                'id': result['tweet_id'],
+                'text': result['text'],
+                'created_at': None,  # We don't have this in classifications
+                'metrics': {
+                    'like_count': 0,
+                    'retweet_count': 0,
+                    'reply_count': 0
+                },
+                'semantic_score': result['score'],
+                'topic': result['topic']
+            })
+        
+        return tweets
+    except Exception as e:
+        logger.error(f"Error getting likes by topic: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/likes/search")
+async def search_likes_semantic(
+    query: str = Query(..., description="Semantic search query"),
+    limit: int = Query(20, ge=1, le=100)
+):
+    """Search likes using semantic similarity."""
+    try:
+        from .semantic_classifier import SemanticTweetClassifier
+        classifier = SemanticTweetClassifier()
+        results = classifier.search_tweets_semantic(query, limit)
+        
+        # Convert to Tweet format
+        tweets = []
+        for result in results:
+            tweets.append({
+                'id': result['tweet_id'],
+                'text': result['text'],
+                'created_at': None,
+                'metrics': {
+                    'like_count': 0,
+                    'retweet_count': 0,
+                    'reply_count': 0
+                },
+                'similarity_score': result['similarity_score']
+            })
+        
+        return tweets
+    except Exception as e:
+        logger.error(f"Error searching likes: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/classify/run")
+async def run_classification():
+    """Trigger classification of all tweets and likes."""
+    try:
+        from .semantic_classifier import classify_all_likes, classify_all_tweets
+        
+        # Run classification in background (for production, use a task queue)
+        import threading
+        
+        def run_classification_task():
+            classify_all_tweets()
+            classify_all_likes()
+        
+        thread = threading.Thread(target=run_classification_task)
+        thread.start()
+        
+        return {"message": "Classification started in background", "status": "running"}
+    except Exception as e:
+        logger.error(f"Error starting classification: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/enrichment/stats")
+async def get_enrichment_stats(service: LocalTwitterService = Depends(get_local_twitter_service)):
+    """Get tweet enrichment statistics."""
+    try:
+        from .tweet_enrichment_service import TweetEnrichmentService
+        enrichment_service = TweetEnrichmentService(service.db_path)
+        stats = enrichment_service.get_enrichment_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting enrichment stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/enrichment/run")
+async def run_enrichment(
+    limit: int = Query(100, ge=1, le=1000, description="Number of likes to enrich"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Trigger enrichment of likes with author information from Twitter API."""
+    try:
+        from .tweet_enrichment_service import TweetEnrichmentService
+        
+        # Get likes that need enrichment
+        likes = service.get_recent_likes(count=limit, offset=0)
+        
+        # Enrich them
+        enrichment_service = TweetEnrichmentService(service.db_path)
+        enriched_likes = enrichment_service.enrich_likes_batch(likes)
+        
+        # Update the likes table
+        updated_count = enrichment_service.update_likes_table_with_enrichment()
+        
+        return {
+            "message": f"Enriched {len(enriched_likes)} likes",
+            "processed": len(enriched_likes),
+            "updated_in_db": updated_count,
+            "status": "completed"
+        }
+    except Exception as e:
+        logger.error(f"Error running enrichment: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/enrichment/text-patterns")
+async def run_text_pattern_enrichment(
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Run text-based pattern enrichment for tweet authors."""
+    try:
+        from .text_based_enrichment import TextBasedEnrichmentService
+        
+        text_service = TextBasedEnrichmentService(service.db_path)
+        enriched_count = text_service.enrich_likes_from_text()
+        
+        return {
+            "message": "Text pattern enrichment completed",
+            "enriched_count": enriched_count,
+            "method": "text_patterns"
+        }
+        
+    except Exception as e:
+        logger.error(f"Text pattern enrichment failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/enrichment/web-scraping")
+async def run_web_scraping_enrichment(
+    limit: int = Query(50, ge=1, le=100, description="Number of tweets to scrape"),
+    delay: float = Query(2.0, ge=1.0, le=10.0, description="Delay between requests in seconds"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Run web scraping enrichment for tweet authors."""
+    try:
+        from .web_scraping_enrichment import WebScrapingEnrichmentService
+        
+        scraping_service = WebScrapingEnrichmentService(service.db_path)
+        enriched_count = scraping_service.enrich_likes_batch(limit=limit, delay=delay)
+        
+        return {
+            "message": "Web scraping enrichment completed",
+            "enriched_count": enriched_count,
+            "method": "web_scraping",
+            "processed_limit": limit
+        }
+        
+    except Exception as e:
+        logger.error(f"Web scraping enrichment failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/enrichment/multi-method")
+async def run_multi_method_enrichment(
+    limit: int = Query(100, ge=1, le=500, description="Number of tweets to process"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Run multi-method enrichment using API, Nitter, and text patterns."""
+    try:
+        from .alternative_api_enrichment import AlternativeAPIEnrichmentService
+        
+        multi_service = AlternativeAPIEnrichmentService(service.db_path)
+        stats = multi_service.enrich_with_multiple_methods(limit=limit)
+        
+        return {
+            "message": "Multi-method enrichment completed",
+            "stats": stats,
+            "method": "multi_method"
+        }
+        
+    except Exception as e:
+        logger.error(f"Multi-method enrichment failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/blocks")
 async def get_blocks(
@@ -1206,29 +1543,463 @@ async def get_lists(
     offset: int = Query(0, ge=0),
     service: LocalTwitterService = Depends(get_local_twitter_service)
 ):
-    """Get Twitter lists."""
+    """Get Twitter lists with enriched metadata."""
     try:
         with sqlite3.connect(service.db_path) as conn:
+            # Join with list metadata cache to get member counts
             cursor = conn.execute("""
-                SELECT id, name, url, type
-                FROM lists
-                ORDER BY name
+                SELECT 
+                    l.id, 
+                    l.name, 
+                    l.url, 
+                    l.type,
+                    lmc.member_count,
+                    lmc.follower_count,
+                    lmc.description,
+                    lmc.private
+                FROM lists l
+                LEFT JOIN list_metadata_cache lmc ON l.id = lmc.list_id 
+                    AND lmc.expires_at > datetime('now')
+                ORDER BY l.name IS NULL, l.name, l.id
                 LIMIT ? OFFSET ?
             """, (limit, offset))
             
             lists = []
             for row in cursor.fetchall():
-                lists.append({
+                list_data = {
                     "id": row[0],
                     "name": row[1],
                     "url": row[2],
-                    "type": row[3]
-                })
+                    "type": row[3],
+                    "member_count": row[4],
+                    "follower_count": row[5],
+                    "description": row[6],
+                    "private": bool(row[7]) if row[7] is not None else None
+                }
+                lists.append(list_data)
             
             return lists
     except Exception as e:
         logger.error(f"Error fetching lists: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/lists/enrichment/stats")
+async def get_list_enrichment_stats(service: LocalTwitterService = Depends(get_local_twitter_service)):
+    """Get statistics about list enrichment."""
+    try:
+        from .list_enrichment_service import ListEnrichmentService
+        
+        enrichment_service = ListEnrichmentService(service.db_path)
+        stats = enrichment_service.get_enrichment_stats()
+        
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting list enrichment stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/lists/enrichment/run")
+async def run_list_enrichment(
+    limit: int = Query(10, ge=1, le=50, description="Number of lists to enrich"),
+    delay: float = Query(1.0, ge=0.5, le=5.0, description="Delay between API requests in seconds"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Run list enrichment to fetch member counts from Twitter API."""
+    try:
+        from .list_enrichment_service import ListEnrichmentService
+        
+        enrichment_service = ListEnrichmentService(service.db_path)
+        
+        # Get list IDs to enrich
+        all_list_ids = enrichment_service.get_all_list_ids()
+        list_ids_to_enrich = all_list_ids[:limit]  # Limit the number for safety
+        
+        if not list_ids_to_enrich:
+            return {
+                "message": "No lists found to enrich",
+                "stats": {"enriched_count": 0, "failed_count": 0, "cached_count": 0, "total_processed": 0}
+            }
+        
+        # Run enrichment
+        stats = enrichment_service.enrich_lists_batch(list_ids_to_enrich, delay=delay)
+        
+        return {
+            "message": f"List enrichment completed for {len(list_ids_to_enrich)} lists",
+            "stats": stats,
+            "processed_list_ids": list_ids_to_enrich
+        }
+        
+    except Exception as e:
+        logger.error(f"List enrichment failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# COMPREHENSIVE X API ENDPOINTS
+# ============================================================================
+
+@app.get("/api/comprehensive/stats")
+async def get_comprehensive_api_stats():
+    """Get statistics about all comprehensive API data."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        stats = service.get_cached_data_stats()
+        api_usage = service.get_api_usage_stats(hours=24)
+        
+        return {
+            "cached_data": stats,
+            "api_usage_24h": api_usage,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting comprehensive API stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/tweets")
+async def fetch_comprehensive_tweets(
+    user_id: str = Query(..., description="User ID to fetch tweets for"),
+    max_results: int = Query(100, ge=1, le=100, description="Maximum number of tweets to fetch")
+):
+    """Fetch comprehensive tweet data from X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_user_tweets(user_id=user_id, max_results=max_results)
+        
+        return {
+            "message": f"Fetched tweets for user {user_id}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive tweets: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/likes")
+async def fetch_comprehensive_likes(
+    user_id: str = Query(..., description="User ID to fetch likes for"),
+    max_results: int = Query(100, ge=1, le=100, description="Maximum number of likes to fetch")
+):
+    """Fetch comprehensive likes data from X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_user_likes(user_id=user_id, max_results=max_results)
+        
+        return {
+            "message": f"Fetched likes for user {user_id}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive likes: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/bookmarks")
+async def fetch_comprehensive_bookmarks(
+    user_id: str = Query(..., description="User ID to fetch bookmarks for"),
+    max_results: int = Query(100, ge=1, le=100, description="Maximum number of bookmarks to fetch")
+):
+    """Fetch comprehensive bookmarks data from X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_user_bookmarks(user_id=user_id, max_results=max_results)
+        
+        return {
+            "message": f"Fetched bookmarks for user {user_id}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive bookmarks: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/followers")
+async def fetch_comprehensive_followers(
+    user_id: str = Query(..., description="User ID to fetch followers for"),
+    max_results: int = Query(1000, ge=1, le=1000, description="Maximum number of followers to fetch")
+):
+    """Fetch comprehensive followers data from X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_user_followers(user_id=user_id, max_results=max_results)
+        
+        return {
+            "message": f"Fetched followers for user {user_id}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive followers: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/following")
+async def fetch_comprehensive_following(
+    user_id: str = Query(..., description="User ID to fetch following for"),
+    max_results: int = Query(1000, ge=1, le=1000, description="Maximum number of following to fetch")
+):
+    """Fetch comprehensive following data from X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_user_following(user_id=user_id, max_results=max_results)
+        
+        return {
+            "message": f"Fetched following for user {user_id}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive following: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/lists")
+async def fetch_comprehensive_lists(
+    user_id: str = Query(..., description="User ID to fetch lists for"),
+    max_results: int = Query(100, ge=1, le=100, description="Maximum number of lists to fetch")
+):
+    """Fetch comprehensive lists data from X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_user_lists(user_id=user_id, max_results=max_results)
+        
+        return {
+            "message": f"Fetched lists for user {user_id}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive lists: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/search/tweets/recent")
+async def search_comprehensive_tweets_recent(
+    query: str = Query(..., description="Search query for tweets"),
+    max_results: int = Query(100, ge=1, le=100, description="Maximum number of tweets to fetch")
+):
+    """Search recent tweets (last 7 days) using comprehensive X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.search_tweets_recent(query=query, max_results=max_results)
+        
+        return {
+            "message": f"Searched recent tweets for query: {query}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error searching comprehensive tweets: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/search/tweets/all")
+async def search_comprehensive_tweets_all(
+    query: str = Query(..., description="Search query for tweets"),
+    max_results: int = Query(500, ge=1, le=500, description="Maximum number of tweets to fetch")
+):
+    """Search all tweets (full archive) using comprehensive X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.search_tweets_all(query=query, max_results=max_results)
+        
+        return {
+            "message": f"Searched all tweets for query: {query}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error searching comprehensive tweets (all): {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/spaces")
+async def fetch_comprehensive_spaces(
+    query: str = Query(None, description="Search query for Spaces"),
+    max_results: int = Query(100, ge=1, le=100, description="Maximum number of Spaces to fetch")
+):
+    """Fetch or search Spaces using comprehensive X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_spaces(query=query, max_results=max_results)
+        
+        return {
+            "message": f"Fetched Spaces" + (f" for query: {query}" if query else ""),
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive Spaces: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/direct-messages")
+async def fetch_comprehensive_direct_messages(
+    participant_id: str = Query(..., description="Participant ID for DM conversation"),
+    max_results: int = Query(100, ge=1, le=100, description="Maximum number of messages to fetch")
+):
+    """Fetch direct messages using comprehensive X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_direct_messages(participant_id=participant_id, max_results=max_results)
+        
+        return {
+            "message": f"Fetched direct messages with participant {participant_id}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive direct messages: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/search/communities")
+async def search_comprehensive_communities(
+    query: str = Query(..., description="Search query for communities"),
+    max_results: int = Query(100, ge=1, le=100, description="Maximum number of communities to fetch")
+):
+    """Search communities using comprehensive X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.search_communities(query=query, max_results=max_results)
+        
+        return {
+            "message": f"Searched communities for query: {query}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error searching comprehensive communities: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/comprehensive/fetch/trends")
+async def fetch_comprehensive_trends(
+    woeid: int = Query(1, description="Where On Earth ID (1 = worldwide)")
+):
+    """Fetch trending topics using comprehensive X API."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        result = service.fetch_trends(woeid=woeid)
+        
+        return {
+            "message": f"Fetched trends for WOEID: {woeid}",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive trends: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/comprehensive/data/tweets")
+async def get_comprehensive_tweets_data(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    author_id: str = Query(None, description="Filter by author ID")
+):
+    """Get stored comprehensive tweets data."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        
+        with sqlite3.connect(service.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            
+            where_clause = ""
+            params = []
+            
+            if author_id:
+                where_clause = "WHERE author_id = ?"
+                params.append(author_id)
+            
+            query = f"""
+                SELECT id, text, created_at, author_id, conversation_id, 
+                       public_metrics, lang, cached_at, data_source
+                FROM tweets_comprehensive 
+                {where_clause}
+                ORDER BY created_at DESC 
+                LIMIT ? OFFSET ?
+            """
+            params.extend([limit, offset])
+            
+            cursor = conn.execute(query, params)
+            tweets = [dict(row) for row in cursor.fetchall()]
+            
+            # Parse JSON fields
+            for tweet in tweets:
+                if tweet['public_metrics']:
+                    tweet['public_metrics'] = json.loads(tweet['public_metrics'])
+            
+            return tweets
+    except Exception as e:
+        logger.error(f"Error getting comprehensive tweets data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/comprehensive/data/users")
+async def get_comprehensive_users_data(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    username: str = Query(None, description="Filter by username")
+):
+    """Get stored comprehensive users data."""
+    try:
+        from .comprehensive_x_api_service import ComprehensiveXAPIService
+        
+        service = ComprehensiveXAPIService()
+        
+        with sqlite3.connect(service.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            
+            where_clause = ""
+            params = []
+            
+            if username:
+                where_clause = "WHERE username LIKE ?"
+                params.append(f"%{username}%")
+            
+            query = f"""
+                SELECT id, username, name, description, location, url,
+                       profile_image_url, verified, created_at, public_metrics,
+                       cached_at, data_source
+                FROM users_comprehensive 
+                {where_clause}
+                ORDER BY username 
+                LIMIT ? OFFSET ?
+            """
+            params.extend([limit, offset])
+            
+            cursor = conn.execute(query, params)
+            users = [dict(row) for row in cursor.fetchall()]
+            
+            # Parse JSON fields
+            for user in users:
+                if user['public_metrics']:
+                    user['public_metrics'] = json.loads(user['public_metrics'])
+            
+            return users
+    except Exception as e:
+        logger.error(f"Error getting comprehensive users data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# END COMPREHENSIVE X API ENDPOINTS
+# ============================================================================
 
 # CLI functionality
 def main():

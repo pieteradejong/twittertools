@@ -3,24 +3,6 @@ import axios from 'axios';
 import { Tweet } from './Tweet';
 import { useState } from 'react';
 
-interface ProfileData {
-  user_id: string;
-  username: string;
-  display_name: string;
-  created_at: string;
-  stats: {
-    tweet_count: number;
-    like_count: number;
-    reply_count: number;
-    zero_engagement_tweets: number;
-    zero_engagement_replies: number;
-  };
-  avatar_url?: string;
-  bio?: string;
-  website?: string;
-  location?: string;
-}
-
 interface TweetData {
   id: string;
   text: string;
@@ -36,11 +18,9 @@ interface TweetData {
 interface TweetListProps {
   isActive: boolean;
   type?: 'likes' | 'bookmarks';
-  profile: ProfileData;
 }
 
-export function TweetList({ isActive, type, profile }: TweetListProps) {
-  console.log('profile: ', profile);
+export function TweetList({ isActive, type }: TweetListProps) {
   const [page, setPage] = useState(0);
   const limit = 20;
   const fetcher = async ({ pageParam = 0 }) => {
@@ -119,7 +99,6 @@ export function TweetList({ isActive, type, profile }: TweetListProps) {
           <>
             <div className="bg-white divide-y divide-gray-200">
               {tweets.map((tweet) => {
-                console.log('Tweet object:', tweet);
                 return (
                   <Tweet
                     key={tweet.id}
@@ -127,7 +106,6 @@ export function TweetList({ isActive, type, profile }: TweetListProps) {
                     text={tweet.text}
                     created_at={tweet.created_at}
                     metrics={tweet.metrics}
-                    profileUsername={profile?.username}
                   />
                 );
               })}

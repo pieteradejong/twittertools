@@ -6,6 +6,12 @@ A full-stack application for analyzing and managing Twitter/X data, featuring a 
 
 ## Features
 
+* **Comprehensive X API Integration**
+  * **Complete X API v2 coverage** - all major endpoints supported
+  * **Intelligent caching** with 7-day TTL and automatic cleanup
+  * **Rate limit management** with automatic detection and handling
+  * **Rich data storage** with JSON fields for complex data structures
+  * **CLI and REST API access** for flexible data interaction
 * Twitter API Integration
   * Fetch and analyze Twitter likes, tweets, and bookmarks
   * User authentication and profile management
@@ -13,7 +19,9 @@ A full-stack application for analyzing and managing Twitter/X data, featuring a 
   * Secure credential caching
 * Data Management
   * Local SQLite storage of Twitter data
-  * Tweet classification and analysis
+  * **Semantic tweet classification** using modern NLP (Sentence Transformers)
+  * **Multi-label topic filtering** with configurable thresholds
+  * **Zero-shot classification** - no training data required
   * User engagement metrics
   * Media attachment tracking
 * Modern Interface
@@ -26,6 +34,48 @@ A full-stack application for analyzing and managing Twitter/X data, featuring a 
   * Progress tracking and resumable downloads
   * Comprehensive error handling
   * Rate limit monitoring
+
+## Comprehensive X API Support
+
+This project now includes **complete X API v2 coverage** with support for all major data types:
+
+### Supported Data Types
+- **Posts/Tweets**: User tweets, search (recent & full archive), mentions
+- **Engagement**: Likes, bookmarks, retweets, quote tweets
+- **Users**: Profiles, followers, following, blocks, mutes
+- **Lists**: User lists, members, followers, tweets
+- **Spaces**: Search, tweets, participants
+- **Direct Messages**: Conversations and events
+- **Communities**: Search, tweets, members
+- **Media**: Metadata and metrics
+- **Trends**: Trending topics by location
+- **Compliance**: Batch compliance jobs
+
+### API Endpoints
+Access all X API data through comprehensive REST endpoints:
+```http
+GET /api/comprehensive/stats                    # Get cached data statistics
+POST /api/comprehensive/fetch/tweets           # Fetch user tweets
+POST /api/comprehensive/fetch/likes            # Fetch user likes
+POST /api/comprehensive/search/tweets/recent   # Search recent tweets
+POST /api/comprehensive/fetch/trends           # Get trending topics
+# ... and many more
+```
+
+### CLI Interface
+Use the comprehensive data fetcher for command-line access:
+```bash
+# Get statistics
+python scripts/comprehensive_data_fetcher.py stats
+
+# Fetch user data
+python scripts/comprehensive_data_fetcher.py user --user-id 123456789 --data-types tweets likes
+
+# Search tweets
+python scripts/comprehensive_data_fetcher.py search --query "python programming" --search-type recent
+```
+
+For complete documentation, see [`COMPREHENSIVE_X_API_GUIDE.md`](COMPREHENSIVE_X_API_GUIDE.md).
 
 ## Prerequisites
 
@@ -70,19 +120,27 @@ The application will be available at:
 twittertools/
 ├── src/                    # Backend Python code
 │   ├── main.py            # FastAPI application and CLI
+│   ├── comprehensive_x_api_service.py # Complete X API v2 implementation
 │   ├── config.py          # Configuration management
+│   ├── semantic_classifier.py # Semantic tweet classification
 │   └── __pycache__/       # Python cache files
 ├── scripts/               # Utility scripts
-│   └── download_x_data.py # Twitter data downloader
+│   ├── download_x_data.py # Twitter data downloader
+│   └── comprehensive_data_fetcher.py # CLI for comprehensive X API
 ├── frontend/              # React frontend (Vite)
 │   ├── src/              # React source code
+│   │   ├── components/   # React components
+│   │   │   └── SemanticLikesFilter.tsx # Semantic filtering UI
+│   │   └── App.tsx       # Main application
 │   └── .env              # Frontend environment variables
 ├── data/                 # Local data storage
-│   ├── x_data.db        # SQLite database
+│   ├── x_data.db        # SQLite database (includes comprehensive tables)
 │   └── auth_cache.json  # Credential cache
 ├── logs/                 # Application logs
 │   └── download.log     # Data download logs
 ├── .env                  # Backend environment variables
+├── COMPREHENSIVE_X_API_GUIDE.md # Complete X API documentation
+├── IMPLEMENTATION_SUMMARY.md    # Implementation overview
 ├── init.sh               # Setup script
 └── run.sh                # Development server script
 ```
@@ -96,12 +154,28 @@ The backend is built with FastAPI and provides:
 * `GET /api/likes` - Get recent likes (with optional count parameter)
 * `GET /api/tweets` - Get user tweets
 * `GET /api/bookmarks` - Get user bookmarks
+* **Comprehensive X API Endpoints:**
+  * `GET /api/comprehensive/stats` - Get cached data and API usage statistics
+  * `POST /api/comprehensive/fetch/*` - Fetch all types of X API data
+  * `POST /api/comprehensive/search/*` - Search tweets and communities
+  * `GET /api/comprehensive/data/*` - Access stored comprehensive data
+* **Semantic Classification Endpoints:**
+  * `GET /api/likes/topics` - Get available topics with counts and statistics
+  * `GET /api/likes/by-topic/{topic}` - Filter likes by semantic topic
+  * `GET /api/likes/search?query=...` - Semantic similarity search
+  * `POST /api/classify/run` - Trigger background classification
 
 #### Features
+* **Complete X API v2 integration** with all major endpoints
+* **Intelligent caching system** with 7-day TTL and automatic cleanup
+* **Rate limit management** with automatic detection and graceful handling
+* **Rich data storage** with JSON fields for complex nested data
 * Twitter API integration with OAuth and Bearer token support
 * Data storage and analysis
 * RESTful API with OpenAPI documentation
-* Tweet classification (coming soon)
+* **Semantic tweet classification** using Sentence Transformers
+* **Multi-topic filtering** with configurable similarity thresholds
+* **Zero-shot learning** - works without training data
 * CLI interface for quick data access
 * Colored logging with status indicators
 * Rate limit handling with automatic retries
@@ -122,6 +196,13 @@ To download Twitter data:
 ```bash
 source env/bin/activate
 python scripts/download_x_data.py  # Downloads tweets, likes, and bookmarks
+```
+
+To use the comprehensive X API CLI:
+```bash
+source env/bin/activate
+python scripts/comprehensive_data_fetcher.py stats  # Get comprehensive statistics
+python scripts/comprehensive_data_fetcher.py user --user-id 123456789 --data-types tweets likes
 ```
 
 > **Note:** Always run the CLI as a module (with `-m src.main`) from the project root to ensure imports work for both CLI and API modes.
@@ -152,10 +233,17 @@ The API documentation includes:
 * Request/response schemas
 * Authentication requirements
 * Example requests
+* **Complete comprehensive X API endpoints**
 
 ## Current Status
 
 ### Completed Features
+* [x] **Complete X API v2 integration** with all major endpoints
+* [x] **Comprehensive data storage** with 10+ database tables
+* [x] **Intelligent caching system** with TTL and automatic cleanup
+* [x] **Rate limit management** with automatic detection
+* [x] **CLI interface** for comprehensive data fetching
+* [x] **REST API endpoints** for all X API data types
 * [x] Twitter API integration
 * [x] Basic API endpoints
 * [x] CLI interface
@@ -165,6 +253,10 @@ The API documentation includes:
 * [x] Likes fetching
 * [x] Tweets fetching
 * [x] Bookmarks fetching
+* [x] **Semantic tweet classification** with Sentence Transformers
+* [x] **Multi-label topic filtering** (technology, politics, Miami, etc.)
+* [x] **Semantic search** with natural language queries
+* [x] **Zero-shot classification** - no training data required
 * [x] Colored logging system
 * [x] Rate limit handling
 * [x] Progress tracking
@@ -172,31 +264,28 @@ The API documentation includes:
 * [x] Secure credential caching
 
 ### In Progress
-* [ ] Frontend implementation
-* [ ] Tweet classification
+* [x] Frontend implementation (React + Tailwind CSS + Headless UI)
+* [x] Tweet classification (semantic classification complete)
 * [ ] Data visualization
 * [ ] List management
 * [ ] User engagement metrics
 
 ### Planned Features
 * [ ] Categorize follows into X List suggestions
-* [ ] Tweet analysis
-* [ ] List recommendations
-* [ ] Block/unblock management
-* [ ] Follow/unfollow tracking
-* [ ] Reply analysis
-* [ ] User interaction metrics
-* [ ] Automated list suggestions
+* [ ] Advanced tweet analysis and insights
+* [ ] Real-time streaming integration
+* [ ] Advanced analytics dashboard
+* [ ] Data export capabilities
+
+## Documentation
+
+* [`COMPREHENSIVE_X_API_GUIDE.md`](COMPREHENSIVE_X_API_GUIDE.md) - Complete guide to X API v2 implementation
+* [`IMPLEMENTATION_SUMMARY.md`](IMPLEMENTATION_SUMMARY.md) - Overview of comprehensive X API features
+* [`API_ACCESS_STRATEGIES.md`](API_ACCESS_STRATEGIES.md) - Twitter API access strategies
 
 ## Contributing
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
 
-## License
-[Add your license here]
+This project provides a complete platform for X (Twitter) data analysis with comprehensive API coverage, intelligent caching, and flexible access patterns. Contributions are welcome!
 
 ## Credential Authentication Cache
 
@@ -269,6 +358,42 @@ If you need to reset your local SQLite database (for example, after updating you
    ```
 
 This is the recommended way to ensure your database is in sync with your latest Twitter archive. You can safely run these scripts any time you want to start fresh.
+
+## Semantic Tweet Classification
+
+The application includes advanced semantic classification capabilities that allow you to filter and search your Twitter likes by topic using modern NLP techniques.
+
+### Features
+* **Zero-shot classification** - No training data required
+* **Multi-label support** - Tweets can belong to multiple topics
+* **Configurable similarity thresholds** - Adjust sensitivity
+* **Real-time semantic search** - Natural language queries
+* **Extensible topic system** - Easy to add new topics
+
+### Default Topics
+The system comes with three pre-configured topics:
+* **Technology** - AI, programming, software development, tech news
+* **Politics** - Political discussions, policy, elections, governance
+* **Miami** - Local Miami content, events, culture, news
+
+### How It Works
+1. **Sentence Transformers**: Uses the `all-MiniLM-L6-v2` model for text embeddings
+2. **Cosine Similarity**: Compares tweet content to topic seed phrases
+3. **Threshold-based Classification**: Configurable similarity threshold (default: 0.3)
+4. **Batch Processing**: Efficient classification of large datasets
+
+### Usage
+* **Frontend**: Use the "Semantic Likes" section to filter by topic or search semantically
+* **API**: Access classification endpoints programmatically
+* **Background Processing**: Trigger classification of all likes via API
+
+### Performance
+* Model loading: ~2-3 seconds (cached after first use)
+* Classification: ~0.6 seconds per tweet
+* Database storage: Efficient indexing for fast retrieval
+
+### Adding New Topics
+Topics are defined in `src/semantic_classifier.py` with seed phrases that represent the topic's semantic space. The system automatically handles multi-label classification and similarity scoring.
 
 [DEPRECATED] ~~## Functional requirements~~
 * show who I blocked and when, plus reminders to potentially unblock

@@ -6,6 +6,10 @@ import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { FollowingList } from "./components/FollowingList";
 import { FollowersList } from "./components/FollowersList";
+import { UserList } from "./components/UserList";
+import { DirectMessageList } from "./components/DirectMessageList";
+import { ListsList } from "./components/ListsList";
+import { SemanticLikesFilter } from "./components/SemanticLikesFilter";
 
 interface ProfileData {
   user_id: string;
@@ -15,7 +19,13 @@ interface ProfileData {
   stats: {
     tweet_count: number;
     like_count: number;
+    bookmark_count: number;
     reply_count: number;
+    blocks_count: number;
+    mutes_count: number;
+    dm_count: number;
+    lists_count: number;
+    following_count: number;
     zero_engagement_tweets: number;
     zero_engagement_replies: number;
   };
@@ -50,9 +60,10 @@ export default function App() {
       bookmarks: "Bookmarks",
       replies: "Replies",
       lists: "Lists",
-      analytics: "Analytics",
       following: "Following",
       blocked: "Blocked",
+      muted: "Muted",
+      "direct-messages": "Direct Messages",
       followers: "Followers"
     };
     return tabNames[tab] || tab;
@@ -70,19 +81,24 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto bg-gray-50">
-        {activeTab === "tweets" && <TweetList isActive={true} profile={profile} />}
-        {activeTab === "likes" && <TweetList isActive={true} type="likes" profile={profile} />}
-        {activeTab === "bookmarks" && <TweetList isActive={true} type="bookmarks" profile={profile} />}
+        {activeTab === "tweets" && <TweetList isActive={true} />}
+        {activeTab === "likes" && <TweetList isActive={true} type="likes" />}
+        {activeTab === "semantic-likes" && <SemanticLikesFilter isActive={true} />}
+        {activeTab === "bookmarks" && <TweetList isActive={true} type="bookmarks" />}
         {activeTab === "replies" && <ReplyList isActive={true} />}
-        {activeTab === "zero-engagement-tweets" && (
-          <div className="max-w-2xl mx-auto py-8">
-            <TweetList isActive={activeTab === "zero-engagement-tweets"} profile={profile} />
-          </div>
-        )}
         {activeTab === "following" && <FollowingList isActive={true} />}
         {activeTab === "followers" && <FollowersList isActive={true} />}
+        {activeTab === "blocked" && <UserList type="blocks" isActive={true} />}
+        {activeTab === "muted" && <UserList type="mutes" isActive={true} />}
+        {activeTab === "direct-messages" && <DirectMessageList isActive={true} />}
+        {activeTab === "lists" && <ListsList isActive={true} />}
+        {activeTab === "zero-engagement-tweets" && (
+          <div className="max-w-2xl mx-auto py-8">
+            <TweetList isActive={activeTab === "zero-engagement-tweets"} />
+          </div>
+        )}
         {/* Placeholder for other tabs */}
-        {!["tweets", "likes", "bookmarks", "replies", "zero-engagement-tweets", "following", "followers"].includes(activeTab) && (
+        {!["tweets", "likes", "semantic-likes", "bookmarks", "replies", "zero-engagement-tweets", "following", "followers", "blocked", "muted", "direct-messages", "lists"].includes(activeTab) && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <h2 className="text-2xl font-bold text-gray-900 mb-2">{getTabDisplayName(activeTab)}</h2>

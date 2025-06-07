@@ -27,6 +27,7 @@ class InMemoryTweetCache:
         # Core data stores
         self.tweets: Dict[str, Dict[str, Any]] = {}
         self.likes: Dict[str, Dict[str, Any]] = {}
+        self.bookmarks: Dict[str, Dict[str, Any]] = {}
         self.blocks: Dict[str, Dict[str, Any]] = {}
         self.mutes: Dict[str, Dict[str, Any]] = {}
         self.users: Dict[str, Dict[str, Any]] = {}
@@ -37,6 +38,7 @@ class InMemoryTweetCache:
         self.tweets_by_author: Dict[str, List[str]] = {}
         self.replies: Dict[str, List[str]] = {}  # tweet_id -> list of reply_ids
         self.liked_tweet_ids: set = set()
+        self.bookmarked_tweet_ids: set = set()
         
         # Cache metadata
         self.loaded = False
@@ -44,6 +46,7 @@ class InMemoryTweetCache:
         self.stats = {
             'tweets_count': 0,
             'likes_count': 0,
+            'bookmarks_count': 0,
             'blocks_count': 0,
             'mutes_count': 0,
             'users_count': 0,
@@ -68,6 +71,9 @@ class InMemoryTweetCache:
                 
                 # Load likes
                 self._load_likes(conn)
+                
+                # Load bookmarks
+                self._load_bookmarks(conn)
                 
                 # Load blocks
                 self._load_blocks(conn)
@@ -150,6 +156,30 @@ class InMemoryTweetCache:
             self.stats['likes_count'] += 1
         
         logger.info(f"❤️ Loaded {self.stats['likes_count']} likes")
+    
+    def _load_bookmarks(self, conn: sqlite3.Connection) -> None:
+        """Load all bookmarks into memory."""
+        try:
+            cursor = conn.execute("""
+                SELECT id, text, created_at, author_id
+                FROM bookmarks
+            """)
+            
+            for row in cursor.fetchall():
+                bookmark_data = {
+                    'id': row['id'],
+                    'text': row['text'],
+                    'created_at': row['created_at'],
+                    'author_id': row['author_id']
+                }
+                
+                self.bookmarks[row['id']] = bookmark_data
+                self.bookmarked_tweet_ids.add(row['id'])
+                self.stats['bookmarks_count'] += 1
+            
+            logger.info(f"🔖 Loaded {self.stats['bookmarks_count']} bookmarks")
+        except sqlite3.OperationalError:
+            logger.info("🔖 No bookmarks table found, skipping")
     
     def _load_blocks(self, conn: sqlite3.Connection) -> None:
         """Load all blocked users into memory."""
@@ -277,6 +307,7 @@ class InMemoryTweetCache:
         logger.info("📊 Cache Statistics:")
         logger.info(f"   • Tweets: {self.stats['tweets_count']:,}")
         logger.info(f"   • Likes: {self.stats['likes_count']:,}")
+        logger.info(f"   • Bookmarks: {self.stats['bookmarks_count']:,}")
         logger.info(f"   • Blocks: {self.stats['blocks_count']:,}")
         logger.info(f"   • Mutes: {self.stats['mutes_count']:,}")
         logger.info(f"   • Users: {self.stats['users_count']:,}")
@@ -336,6 +367,20 @@ class InMemoryTweetCache:
         """Check if a tweet is liked."""
         return tweet_id in self.liked_tweet_ids
     
+    def get_bookmarked_tweets(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get all bookmarked tweets."""
+        bookmarks = list(self.bookmarks.values())
+        bookmarks.sort(key=lambda b: b['created_at'] or '', reverse=True)
+        
+        if limit:
+            bookmarks = bookmarks[:limit]
+        
+        return bookmarks
+    
+    def is_tweet_bookmarked(self, tweet_id: str) -> bool:
+        """Check if a tweet is bookmarked."""
+        return tweet_id in self.bookmarked_tweet_ids
+    
     def get_zero_engagement_tweets(self, author_id: str) -> List[Dict[str, Any]]:
         """Get tweets with zero engagement (0 likes, 0 retweets)."""
         user_tweets = self.get_tweets_by_author(author_id)
@@ -366,12 +411,14 @@ class InMemoryTweetCache:
         self.loaded = False
         self.tweets.clear()
         self.likes.clear()
+        self.bookmarks.clear()
         self.blocks.clear()
         self.mutes.clear()
         self.users.clear()
         self.tweets_by_author.clear()
         self.replies.clear()
         self.liked_tweet_ids.clear()
+        self.bookmarked_tweet_ids.clear()
         self.account.clear()
         self.profile.clear()
         

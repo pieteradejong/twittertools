@@ -266,6 +266,19 @@ class TwitterCache:
                 [(reply['id'], json.dumps(reply), now, now, expires_at) for reply in replies]
             )
     
+    def bulk_set_bookmarks(self, bookmarks: List[Dict[str, Any]]):
+        """Cache multiple bookmarks efficiently."""
+        now = datetime.now()
+        expires_at = now + timedelta(seconds=self.TTL['bookmark'])
+        with self._get_conn() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO bookmarks (tweet_id, data, created_at, updated_at, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [(bookmark['id'], json.dumps(bookmark), now, now, expires_at) for bookmark in bookmarks]
+            )
+    
     def get_last_fetch_time(self, user_id: str, data_type: str) -> Optional[datetime]:
         """Get the last fetch time for a specific user and data type."""
         with self._get_conn() as conn:

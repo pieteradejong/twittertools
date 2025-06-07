@@ -46,7 +46,9 @@ def create_tables(conn):
         tweet_id TEXT PRIMARY KEY, -- like.tweetId
         full_text TEXT, -- like.fullText
         expanded_url TEXT, -- like.expandedUrl
-        liked_at TEXT -- (not present, but for future API)
+        liked_at TEXT, -- (not present, but for future API)
+        author_id TEXT, -- extracted from URL or API
+        author_username TEXT -- extracted from URL or API
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS blocks (
         user_id TEXT PRIMARY KEY, -- blocking.accountId
@@ -124,13 +126,39 @@ def insert_tweets(conn, tweets, account_id):
     conn.commit()
     return count
 
+def extract_author_from_url(expanded_url):
+    """Extract username from Twitter URL like https://twitter.com/username/status/123"""
+    if not expanded_url:
+        return None, None
+    
+    import re
+    # Match Twitter URLs: twitter.com/username/status/id or x.com/username/status/id
+    pattern = r'(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)'
+    match = re.search(pattern, expanded_url)
+    
+    if match:
+        username = match.group(1)
+        # Filter out invalid usernames (Twitter usernames can't contain certain chars)
+        if username and not any(char in username for char in ['?', '&', '=', '#']):
+            return None, username  # We don't have author_id from URL, only username
+    
+    return None, None
+
 def insert_likes(conn, likes):
     c = conn.cursor()
     count = 0
     for entry in likes:
         like = entry.get('like') or entry
-        c.execute('''INSERT OR IGNORE INTO likes (tweet_id, full_text, expanded_url, liked_at) VALUES (?, ?, ?, ?)''',
-                  (like.get('tweetId'), like.get('fullText'), like.get('expandedUrl'), like.get('createdAt')))
+        
+        # Try to extract author info from URL
+        author_id, author_username = extract_author_from_url(like.get('expandedUrl'))
+        
+        # Use any existing author info from the like data (if available)
+        author_id = like.get('authorId') or author_id
+        author_username = like.get('authorUsername') or author_username
+        
+        c.execute('''INSERT OR IGNORE INTO likes (tweet_id, full_text, expanded_url, liked_at, author_id, author_username) VALUES (?, ?, ?, ?, ?, ?)''',
+                  (like.get('tweetId'), like.get('fullText'), like.get('expandedUrl'), like.get('createdAt'), author_id, author_username))
         count += 1
     conn.commit()
     return count
@@ -157,13 +185,46 @@ def insert_mutes(conn, mutes):
     conn.commit()
     return count
 
+def extract_list_info_from_url(url):
+    """Extract list ID and name from Twitter list URL"""
+    if not url:
+        return None, None
+    
+    import re
+    # Match Twitter list URLs: twitter.com/username/lists/id_or_name
+    pattern = r'(?:twitter\.com|x\.com)/[^/]+/lists/(.+)$'
+    match = re.search(pattern, url)
+    
+    if match:
+        list_identifier = match.group(1)
+        
+        # If it's all digits, it's a numeric ID
+        if list_identifier.isdigit():
+            return list_identifier, None
+        else:
+            # It's a name-based identifier, use it as both ID and name
+            # Clean up the name for display (replace hyphens with spaces, etc.)
+            display_name = list_identifier.replace('-', ' ').replace('_', ' ').title()
+            return list_identifier, display_name
+    
+    return None, None
+
 def insert_lists(conn, lists_data, list_type):
     c = conn.cursor()
     count = 0
     for entry in lists_data:
         info = entry.get('userListInfo') or entry.get('list') or entry
+        url = info.get('url')
+        
+        # Extract ID and name from URL
+        list_id, list_name = extract_list_info_from_url(url)
+        
+        # Use extracted info or fallback to original data
+        final_id = info.get('id') or list_id
+        final_name = info.get('name') or list_name
+        
         c.execute('''INSERT OR IGNORE INTO lists (id, name, url, type) VALUES (?, ?, ?, ?)''',
-                  (info.get('id'), info.get('name'), info.get('url'), list_type))
+                  (final_id, final_name, url, list_type))
         count += 1
     conn.commit()
     return count

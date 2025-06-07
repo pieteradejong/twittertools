@@ -9,6 +9,12 @@ interface SidebarProps {
       tweet_count: number;
       like_count: number;
       reply_count: number;
+      bookmark_count: number;
+      blocks_count: number;
+      mutes_count: number;
+      dm_count: number;
+      lists_count: number;
+      following_count: number;
       zero_engagement_tweets: number;
       zero_engagement_replies: number;
     };
@@ -42,6 +48,15 @@ const NAV_ITEMS = [
     )
   },
   { 
+    label: "Semantic Likes", 
+    value: "semantic-likes", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+      </svg>
+    )
+  },
+  { 
     label: "Bookmarks", 
     value: "bookmarks", 
     icon: (
@@ -68,15 +83,7 @@ const NAV_ITEMS = [
       </svg>
     )
   },
-  { 
-    label: "Analytics", 
-    value: "analytics", 
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-      </svg>
-    )
-  },
+
   { 
     label: "Following", 
     value: "following", 
@@ -101,6 +108,25 @@ const NAV_ITEMS = [
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636m12.728 12.728L12 12m6.364 6.364L12 12m0 0L5.636 5.636M12 12l6.364-6.364M12 12l-6.364 6.364" />
+      </svg>
+    )
+  },
+  { 
+    label: "Muted", 
+    value: "muted", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+      </svg>
+    )
+  },
+  { 
+    label: "Direct Messages", 
+    value: "direct-messages", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
       </svg>
     )
   }
@@ -148,6 +174,18 @@ export function Sidebar({ activeTab, onTabChange, profile, profileLoading }: Sid
                 <div className="text-right">{profile.stats.reply_count}</div>
                 <div className="font-medium">Likes</div>
                 <div className="text-right">{profile.stats.like_count}</div>
+                <div className="font-medium">Bookmarks</div>
+                <div className="text-right">{profile.stats.bookmark_count || 0}</div>
+                <div className="font-medium">Following</div>
+                <div className="text-right">{profile.stats.following_count || 0}</div>
+                <div className="font-medium">Lists</div>
+                <div className="text-right">{profile.stats.lists_count || 0}</div>
+                <div className="font-medium">Blocked</div>
+                <div className="text-right">{profile.stats.blocks_count || 0}</div>
+                <div className="font-medium">Muted</div>
+                <div className="text-right">{profile.stats.mutes_count || 0}</div>
+                <div className="font-medium">Direct Messages</div>
+                <div className="text-right">{profile.stats.dm_count || 0}</div>
                 <div className="font-medium">Zero Engagement Tweets</div>
                 <div className="text-right">{profile.stats.zero_engagement_tweets}</div>
                 <div className="font-medium">Zero Engagement Replies</div>
