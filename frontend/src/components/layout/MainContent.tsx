@@ -6,7 +6,7 @@ interface MainContentProps {
 
 export function MainContent({ activeTab }: MainContentProps) {
   return (
-    <main className="flex-1 overflow-y-auto bg-gray-50">
+    <main className="w-full overflow-y-auto bg-gray-50 max-w-4xl">
       <TabRouter activeTab={activeTab} />
     </main>
   );
