@@ -39,6 +39,15 @@ const NAV_ITEMS = [
     )
   },
   { 
+    label: "Zero Engagement Replies", 
+    value: "replies", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+      </svg>
+    )
+  },
+  { 
     label: "Likes", 
     value: "likes", 
     icon: (
@@ -62,15 +71,6 @@ const NAV_ITEMS = [
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-      </svg>
-    )
-  },
-  { 
-    label: "Replies", 
-    value: "replies", 
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
       </svg>
     )
   },
@@ -228,6 +228,7 @@ export function Sidebar({ activeTab, onTabChange, profile, profileLoading }: Sid
             icon={item.icon}
             isActive={activeTab === item.value}
             onClick={() => onTabChange(item.value)}
+            disabled={item.value === 'bookmarks' || item.value === 'direct-messages'}
           />
         ))}
       </div>

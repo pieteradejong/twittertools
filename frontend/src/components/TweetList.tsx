@@ -97,9 +97,19 @@ export function TweetList({ isActive, type }: TweetListProps) {
         ) : !tweets?.length ? (
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
-              <div className="text-6xl mb-4">🎉</div>
-              <p className="text-gray-500 text-lg">No zero engagement tweets found!</p>
-              <p className="text-gray-400 text-sm mt-2">All your tweets have engagement.</p>
+              <div className="text-6xl mb-4">
+                {type === 'likes' ? '💙' : type === 'bookmarks' ? '📖' : '🎉'}
+              </div>
+              <p className="text-gray-500 text-lg">
+                {type === 'likes' ? 'No likes yet!' : 
+                 type === 'bookmarks' ? 'No bookmarks yet!' : 
+                 'No zero engagement tweets found!'}
+              </p>
+              <p className="text-gray-400 text-sm mt-2">
+                {type === 'likes' ? 'Start liking some tweets to see them here.' : 
+                 type === 'bookmarks' ? 'Start bookmarking tweets to see them here.' : 
+                 'All your tweets have engagement.'}
+              </p>
             </div>
           </div>
         ) : (

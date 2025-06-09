@@ -38,7 +38,16 @@ async function fetchProfile() {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("zero-engagement-tweets");
+  const [activeTab, setActiveTab] = useState(() => {
+    // Load the last selected tab from localStorage, default to "zero-engagement-tweets"
+    return localStorage.getItem('twittertools-active-tab') || "zero-engagement-tweets";
+  });
+
+  // Handle tab change and persist to localStorage
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    localStorage.setItem('twittertools-active-tab', tab);
+  };
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ['profile'],
@@ -75,18 +84,38 @@ export default function App() {
       {/* Left Sidebar */}
       <Sidebar
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         profile={profile}
         profileLoading={profileLoading}
       />
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto bg-gray-50">
-        {activeTab === "tweets" && <TweetList isActive={true} />}
-        {activeTab === "likes" && <TweetList isActive={true} type="likes" />}
-        {activeTab === "semantic-likes" && <SemanticLikesFilter isActive={true} />}
-        {activeTab === "bookmarks" && <TweetList isActive={true} type="bookmarks" />}
-        {activeTab === "replies" && <ReplyList isActive={true} />}
+        {activeTab === "tweets" && (
+          <div className="max-w-2xl mx-auto py-8">
+            <TweetList isActive={true} />
+          </div>
+        )}
+        {activeTab === "likes" && (
+          <div className="max-w-2xl mx-auto py-8">
+            <TweetList isActive={true} type="likes" />
+          </div>
+        )}
+        {activeTab === "semantic-likes" && (
+          <div className="max-w-2xl mx-auto py-8">
+            <SemanticLikesFilter isActive={true} />
+          </div>
+        )}
+        {activeTab === "bookmarks" && (
+          <div className="max-w-2xl mx-auto py-8">
+            <TweetList isActive={true} type="bookmarks" />
+          </div>
+        )}
+        {activeTab === "replies" && (
+          <div className="max-w-2xl mx-auto py-8">
+            <ReplyList isActive={true} />
+          </div>
+        )}
         {activeTab === "following" && <FollowingList isActive={true} />}
         {activeTab === "followers" && <FollowersList isActive={true} />}
         {activeTab === "profile-enrichment" && <ProfileEnrichment />}

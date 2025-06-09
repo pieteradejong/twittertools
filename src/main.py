@@ -2282,6 +2282,132 @@ async def get_profile_stats(service: LocalTwitterService = Depends(get_local_twi
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/profiles/scrape")
+async def scrape_user_profiles(
+    limit: int = Query(10, ge=1, le=50, description="Number of profiles to scrape"),
+    delay: float = Query(2.0, ge=1.0, le=5.0, description="Delay between requests in seconds"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Scrape user profiles from Twitter web pages."""
+    try:
+        from src.profile_scraper import TwitterProfileScraper
+        
+        # Initialize scraper
+        scraper = TwitterProfileScraper(str(service.db_path))
+        
+        # Get users that need scraping
+        user_ids = scraper.get_users_needing_scraping(limit)
+        
+        if not user_ids:
+            return {
+                "message": "No users found that need profile scraping",
+                "total_requested": limit,
+                "successfully_scraped": 0,
+                "failed_scrapes": 0,
+                "profiles_updated": 0,
+                "errors": []
+            }
+        
+        logger.info(f"Starting web scraping for {len(user_ids)} user profiles...")
+        
+        # Run batch scraping
+        results = scraper.scrape_profiles_batch(user_ids, delay, limit)
+        
+        logger.info(f"Profile scraping completed: {results['successfully_scraped']} successful, {results['failed_scrapes']} failed")
+        
+        return {
+            "message": f"Profile scraping completed successfully",
+            **results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during profile scraping: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/profiles/scraping-candidates")
+async def get_scraping_candidates(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Get list of users that could benefit from web scraping."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            # Get users that need scraping with their relationship info
+            query = """
+                SELECT 
+                    u.id,
+                    u.username,
+                    u.display_name,
+                    u.avatar_url,
+                    u.bio,
+                    u.profile_source,
+                    r.relationship_type,
+                    r.created_at as relationship_date
+                FROM users u
+                LEFT JOIN relationships r ON u.id = r.target_user_id
+                WHERE (u.username IS NULL OR u.username LIKE 'user_%')
+                   OR u.avatar_url IS NULL 
+                   OR u.bio IS NULL
+                ORDER BY u.id
+                LIMIT ? OFFSET ?
+            """
+            
+            cursor = conn.execute(query, (limit, offset))
+            users = []
+            
+            for row in cursor.fetchall():
+                user_id, username, display_name, avatar_url, bio, profile_source, rel_type, rel_date = row
+                
+                # Determine what data is missing
+                missing_data = []
+                if not username or username.startswith('user_'):
+                    missing_data.append('username')
+                if not avatar_url:
+                    missing_data.append('avatar')
+                if not bio:
+                    missing_data.append('bio')
+                
+                # Build intent URL for scraping
+                intent_url = f"https://twitter.com/intent/user?user_id={user_id}"
+                
+                users.append({
+                    "id": user_id,
+                    "username": username,
+                    "display_name": display_name,
+                    "avatar_url": avatar_url,
+                    "bio": bio,
+                    "profile_source": profile_source,
+                    "relationship_type": rel_type,
+                    "relationship_date": rel_date,
+                    "missing_data": missing_data,
+                    "intent_url": intent_url,
+                    "needs_scraping": len(missing_data) > 0
+                })
+            
+            # Get total count for pagination
+            total_count = conn.execute("""
+                SELECT COUNT(*) FROM users 
+                WHERE (username IS NULL OR username LIKE 'user_%')
+                   OR avatar_url IS NULL 
+                   OR bio IS NULL
+            """).fetchone()[0]
+        
+        return {
+            "users": users,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total_count
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting scraping candidates: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # CLI functionality
 def main():
     """CLI entry point."""
