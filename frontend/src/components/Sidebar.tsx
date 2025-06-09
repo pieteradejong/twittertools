@@ -103,6 +103,16 @@ const NAV_ITEMS = [
     )
   },
   { 
+    label: "Profile Enrichment", 
+    value: "profile-enrichment", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v4m4.83-2.83l-2.83 2.83" />
+      </svg>
+    )
+  },
+  { 
     label: "Blocked", 
     value: "blocked", 
     icon: (

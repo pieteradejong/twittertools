@@ -1214,15 +1214,16 @@ async def get_following(
             for row in cursor.fetchall():
                 following.append({
                     "id": row[0],
-                    "username": row[1] or f"user_{row[0][-8:]}",
-                    "display_name": row[2] or f"User {row[0][-8:]}",
+                    "username": row[1],  # Can be null - frontend will handle fallback
+                    "display_name": row[2] or f"Twitter User {row[0][-8:]}",
                     "user_link": row[3],
                     "avatar_url": row[4],
                     "verified": bool(row[5]) if row[5] is not None else False,
                     "follower_count": row[6],
                     "following_count": row[7],
                     "tweet_count": row[8],
-                    "relationship_created_at": row[9]
+                    "relationship_created_at": row[9],
+                    "needs_profile_data": row[1] is None  # Indicate if profile needs enriching
                 })
             
             return {
@@ -1295,15 +1296,16 @@ async def get_followers(
             for row in cursor.fetchall():
                 followers.append({
                     "id": row[0],
-                    "username": row[1] or f"user_{row[0][-8:]}",
-                    "display_name": row[2] or f"User {row[0][-8:]}",
+                    "username": row[1],  # Can be null - frontend will handle fallback
+                    "display_name": row[2] or f"Twitter User {row[0][-8:]}",
                     "user_link": row[3],
                     "avatar_url": row[4],
                     "verified": bool(row[5]) if row[5] is not None else False,
                     "follower_count": row[6],
                     "following_count": row[7],
                     "tweet_count": row[8],
-                    "relationship_created_at": row[9]
+                    "relationship_created_at": row[9],
+                    "needs_profile_data": row[1] is None  # Indicate if profile needs enriching
                 })
             
             return {

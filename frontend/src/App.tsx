@@ -10,6 +10,7 @@ import { UserList } from "./components/UserList";
 import { DirectMessageList } from "./components/DirectMessageList";
 import { ListsList } from "./components/ListsList";
 import { SemanticLikesFilter } from "./components/SemanticLikesFilter";
+import { ProfileEnrichment } from "./components/ProfileEnrichment";
 
 interface ProfileData {
   user_id: string;
@@ -88,6 +89,7 @@ export default function App() {
         {activeTab === "replies" && <ReplyList isActive={true} />}
         {activeTab === "following" && <FollowingList isActive={true} />}
         {activeTab === "followers" && <FollowersList isActive={true} />}
+        {activeTab === "profile-enrichment" && <ProfileEnrichment />}
         {activeTab === "blocked" && <UserList type="blocks" isActive={true} />}
         {activeTab === "muted" && <UserList type="mutes" isActive={true} />}
         {activeTab === "direct-messages" && <DirectMessageList isActive={true} />}
@@ -98,7 +100,7 @@ export default function App() {
           </div>
         )}
         {/* Placeholder for other tabs */}
-        {!["tweets", "likes", "semantic-likes", "bookmarks", "replies", "zero-engagement-tweets", "following", "followers", "blocked", "muted", "direct-messages", "lists"].includes(activeTab) && (
+        {!["tweets", "likes", "semantic-likes", "bookmarks", "replies", "zero-engagement-tweets", "following", "followers", "profile-enrichment", "blocked", "muted", "direct-messages", "lists"].includes(activeTab) && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <h2 className="text-2xl font-bold text-gray-900 mb-2">{getTabDisplayName(activeTab)}</h2>
