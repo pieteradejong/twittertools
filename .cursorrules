@@ -29,3 +29,5 @@ and then react vite frontend that allows me to perform certain actions e.g. dele
 - New topics should be added to the TOPIC_DEFINITIONS in semantic_classifier.py with appropriate seed phrases
 - Classification results are stored in the classifications table with proper indexing
 - Frontend semantic features should integrate with the SemanticLikesFilter component 
+
+

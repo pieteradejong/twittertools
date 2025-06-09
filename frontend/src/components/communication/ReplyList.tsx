@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { Tweet } from './Tweet';
+import { Tweet } from '../tweets/Tweet';
 
 interface ReplyData {
   id: string;

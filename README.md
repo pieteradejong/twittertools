@@ -208,20 +208,120 @@ python scripts/comprehensive_data_fetcher.py user --user-id 123456789 --data-typ
 > **Note:** Always run the CLI as a module (with `-m src.main`) from the project root to ensure imports work for both CLI and API modes.
 
 ### Frontend Development
-The frontend is built with:
-* React + TypeScript
-* Vite for development
-* **Tailwind CSS** for all styling
-* **Headless UI** for accessible interactive components
-* React Query for data fetching
+
+#### Technology Stack
+The frontend is built with modern React technologies:
+* **React 18** with TypeScript for type safety
+* **Vite** for fast development and optimized builds
+* **Tailwind CSS** for utility-first styling
+* **Headless UI** for accessible, unstyled interactive components
+* **React Query (TanStack Query)** for data fetching and state management
 
 > **Note:** The UI was migrated from Mantine to Tailwind CSS + Headless UI. All new UI should use Tailwind CSS and Headless UI only.
 
-To run the frontend development server separately:
+#### Component Architecture
+The frontend follows a clean, domain-driven architecture for better maintainability:
+
+```
+frontend/src/components/
+├── layout/              # Application layout & navigation
+│   ├── Layout.tsx       # Main layout wrapper
+│   ├── Sidebar.tsx      # Navigation sidebar
+│   ├── MenuItem.tsx     # Individual menu items
+│   ├── MainContent.tsx  # Content area wrapper
+│   └── index.ts         # Barrel exports
+├── tweets/              # Tweet-related functionality
+│   ├── Tweet.tsx        # Individual tweet display
+│   ├── TweetList.tsx    # Tweet feed with pagination
+│   ├── SemanticLikesFilter.tsx # Advanced filtering UI
+│   └── index.ts
+├── users/               # User & social features
+│   ├── UserList.tsx     # Generic user listing
+│   ├── FollowingList.tsx
+│   ├── FollowersList.tsx
+│   └── ListsList.tsx
+├── communication/       # Messaging & replies
+│   ├── DirectMessageList.tsx
+│   └── ReplyList.tsx
+├── profile/             # Profile management
+│   ├── ProfileEnrichment.tsx
+│   └── AuthStatus.tsx
+├── common/              # Reusable UI components
+│   ├── LoadingState.tsx # Standardized loading spinner
+│   ├── EmptyState.tsx   # Empty state with icon/message
+│   ├── ErrorState.tsx   # Error handling with retry
+│   └── index.ts
+└── tabs/                # Tab routing system
+    └── TabRegistry.tsx  # Centralized tab management
+```
+
+#### Key Features
+
+**🎯 Domain-Based Organization**
+- Components grouped by functionality for better maintainability
+- Clear separation of concerns between layout, data, and UI components
+- Barrel exports for clean import statements
+
+**🔄 Tab Registry System**
+- Centralized mapping of tabs to components
+- Eliminates long conditional chains in render logic
+- Easy to add new features without touching core routing code
+- Built-in placeholder system for unimplemented features
+
+**🧩 Reusable Components**
+- Standardized loading, empty, and error states
+- Consistent UI patterns across the application
+- Self-contained components with their own styling
+
+**📱 Responsive Design**
+- Twitter-like constrained width for optimal readability
+- Responsive layout that works on all screen sizes
+- Consistent spacing and typography using Tailwind's design system
+
+**🎨 Modern UI/UX**
+- Clean, minimal interface inspired by Twitter/X
+- Smooth hover states and transitions
+- Accessible interactive components via Headless UI
+- Semantic HTML structure for screen readers
+
+#### Component Hierarchy
+```
+App
+└── Layout
+    ├── Sidebar
+    │   └── MenuItem (multiple instances)
+    └── MainContent
+        └── TabRouter
+            └── [Dynamic Component based on activeTab]
+                ├── TweetList → Tweet (multiple)
+                ├── SemanticLikesFilter → Tweet (multiple)
+                ├── UserList/FollowingList/etc.
+                └── Other specialized components
+```
+
+#### Development Commands
 ```bash
+# Start development server
 cd frontend
 npm run dev
+
+# Build for production
+npm run build
+
+# Type checking
+npm run type-check
+
+# Linting
+npm run lint
 ```
+
+#### Adding New Features
+1. **New Tab**: Add entry to `TabRegistry.tsx` with component mapping
+2. **New Component**: Place in appropriate domain folder with index export
+3. **Reusable UI**: Add to `common/` folder for cross-domain usage
+4. **Styling**: Use Tailwind utility classes, avoid custom CSS
+
+The frontend architecture is designed for scalability and maintainability, making it easy to add new features while keeping the codebase organized and clean.
 
 ## API Documentation
 Once the backend server is running, visit:

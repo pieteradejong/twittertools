@@ -114,7 +114,7 @@ export function TweetList({ isActive, type }: TweetListProps) {
           </div>
         ) : (
           <>
-            <div className="bg-white divide-y divide-gray-200">
+            <div className="bg-white divide-y divide-gray-200 max-w-2xl mx-auto">
               {tweets.map((tweet) => {
                 return (
                   <Tweet
