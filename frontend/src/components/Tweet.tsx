@@ -212,10 +212,13 @@ export function Tweet({ text, created_at, metrics, user, author, media, id, sema
       </div>
       {/* Management Panel */}
       <div className="mt-4 flex justify-start">
-        {/* Only show if username and tweet id are available */}
-        {(username && username !== 'unknown' && id) && (
+        {/* Show if we have tweet id and either username or author id */}
+        {id && (username !== 'unknown' || author?.id) && (
           <a
-            href={`https://twitter.com/${username}/status/${id}`}
+            href={username !== 'unknown' 
+              ? `https://twitter.com/${username}/status/${id}`
+              : `https://twitter.com/i/web/status/${id}`
+            }
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block px-4 py-2 bg-blue-100 text-blue-700 rounded-full font-semibold shadow hover:bg-blue-200 transition-colors text-sm"
