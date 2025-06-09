@@ -12,6 +12,13 @@ interface ReplyData {
     reply_count?: number;
     quote_count?: number;
   };
+  author?: {
+    id?: string;
+    username?: string;
+    display_name?: string;
+    avatar_url?: string;
+    verified?: boolean;
+  };
   in_reply_to: string;
 }
 
@@ -98,6 +105,7 @@ export function ReplyList({ isActive }: ReplyListProps) {
                   text={reply.text}
                   created_at={reply.created_at}
                   metrics={reply.metrics}
+                  author={reply.author}
                 />
                 {/* Reply context */}
                 <div className="px-4 pb-3 text-xs text-gray-500 bg-gray-50 border-b border-gray-200">

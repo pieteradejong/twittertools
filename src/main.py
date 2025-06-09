@@ -415,6 +415,33 @@ class LocalTwitterService:
                 reply_count = reply_counts.get(tweet_id, 0)
                 # Only include tweets with zero engagement
                 if (favorite_count or 0) == 0 and (retweet_count or 0) == 0 and reply_count == 0:
+                    # Get author information
+                    author_cursor = conn.execute("""
+                        SELECT a.username, a.display_name, p.avatar_url 
+                        FROM account a 
+                        LEFT JOIN profile p ON a.account_id = p.account_id 
+                        WHERE a.account_id = ?
+                    """, (author_id,))
+                    author_row = author_cursor.fetchone()
+                    
+                    if author_row:
+                        username, display_name, avatar_url = author_row
+                        user_info = {
+                            'id': author_id,
+                            'username': username,
+                            'display_name': display_name,
+                            'avatar_url': avatar_url,
+                            'verified': False
+                        }
+                    else:
+                        user_info = {
+                            'id': author_id,
+                            'username': 'pietertypes',
+                            'display_name': 'Pieter',
+                            'avatar_url': None,
+                            'verified': False
+                        }
+                    
                     zero_engagement_tweets.append({
                         'id': tweet_id,
                         'text': text,
@@ -427,6 +454,7 @@ class LocalTwitterService:
                         'lang': lang,
                         'deleted_at': deleted_at,
                         'status': status,
+                        'author': user_info,
                         'metrics': {
                             'like_count': favorite_count or 0,
                             'retweet_count': retweet_count or 0,
@@ -441,7 +469,7 @@ class LocalTwitterService:
         with sqlite3.connect(self.db_path) as conn:
             # Get all replies with their engagement metrics
             cursor = conn.execute("""
-                SELECT id, text, created_at, in_reply_to_status_id, favorite_count, retweet_count
+                SELECT id, text, created_at, in_reply_to_status_id, favorite_count, retweet_count, author_id
                 FROM tweets
                 WHERE in_reply_to_status_id IS NOT NULL
                 ORDER BY created_at DESC
@@ -453,14 +481,42 @@ class LocalTwitterService:
                 if in_reply_to_status_id:
                     reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
             for row in cursor.fetchall():
-                reply_id, text, created_at, in_reply_to, favorite_count, retweet_count = row
+                reply_id, text, created_at, in_reply_to, favorite_count, retweet_count, author_id = row
                 reply_count = reply_counts.get(reply_id, 0)
                 # Only include replies with zero engagement
                 if (favorite_count or 0) == 0 and (retweet_count or 0) == 0 and reply_count == 0:
+                    # Get author information
+                    author_cursor = conn.execute("""
+                        SELECT a.username, a.display_name, p.avatar_url 
+                        FROM account a 
+                        LEFT JOIN profile p ON a.account_id = p.account_id 
+                        WHERE a.account_id = ?
+                    """, (author_id,))
+                    author_row = author_cursor.fetchone()
+                    
+                    if author_row:
+                        username, display_name, avatar_url = author_row
+                        user_info = {
+                            'id': author_id,
+                            'username': username,
+                            'display_name': display_name,
+                            'avatar_url': avatar_url,
+                            'verified': False
+                        }
+                    else:
+                        user_info = {
+                            'id': author_id,
+                            'username': 'pietertypes',
+                            'display_name': 'Pieter',
+                            'avatar_url': None,
+                            'verified': False
+                        }
+                    
                     zero_engagement_replies.append({
                         'id': reply_id,
                         'text': text,
                         'created_at': twitter_date_to_iso(created_at),
+                        'author': user_info,
                         'metrics': {
                             'like_count': favorite_count or 0,
                             'retweet_count': retweet_count or 0,
@@ -550,6 +606,34 @@ class TwitterService:
                 if in_reply_to_status_id:
                     reply_counts[in_reply_to_status_id] = reply_counts.get(in_reply_to_status_id, 0) + 1
             cursor = conn.execute("SELECT id, text, created_at, favorite_count, retweet_count FROM tweets WHERE author_id = ? ORDER BY created_at DESC", (user_id,))
+            
+            # Get author information once
+            author_cursor = conn.execute("""
+                SELECT a.username, a.display_name, p.avatar_url 
+                FROM account a 
+                LEFT JOIN profile p ON a.account_id = p.account_id 
+                WHERE a.account_id = ?
+            """, (user_id,))
+            author_row = author_cursor.fetchone()
+            
+            if author_row:
+                username, display_name, avatar_url = author_row
+                user_info = {
+                    'id': user_id,
+                    'username': username,
+                    'display_name': display_name,
+                    'avatar_url': avatar_url,
+                    'verified': False
+                }
+            else:
+                user_info = {
+                    'id': user_id,
+                    'username': 'pietertypes',
+                    'display_name': 'Pieter',
+                    'avatar_url': None,
+                    'verified': False
+                }
+            
             for row in cursor.fetchall():
                 tweet_id, text, created_at, favorite_count, retweet_count = row
                 reply_count = reply_counts.get(tweet_id, 0)
@@ -557,6 +641,7 @@ class TwitterService:
                     'id': tweet_id,
                     'text': text,
                     'created_at': twitter_date_to_iso(created_at),
+                    'author': user_info,
                     'metrics': {
                         'like_count': favorite_count or 0,
                         'retweet_count': retweet_count or 0,
@@ -937,16 +1022,23 @@ async def get_likes(
     service: LocalTwitterService = Depends(get_local_twitter_service)
 ):
     """Get recent likes for authenticated user with author information."""
-    from .tweet_enrichment_service import TweetEnrichmentService
     
     # Get basic likes data
     likes = service.get_recent_likes(count=limit, offset=offset)
     
-    # Enrich with author information from Twitter API
-    enrichment_service = TweetEnrichmentService(service.db_path)
-    enriched_likes = enrichment_service.enrich_likes_batch(likes)
+    # Add basic author information for likes
+    for like in likes:
+        if not like.get('author'):
+            # Try to get author info if we have it, otherwise use fallback
+            like['author'] = {
+                'id': like.get('author_id'),
+                'username': like.get('author_username') or 'unknown',
+                'display_name': like.get('author_username') or 'Unknown User',
+                'avatar_url': None,
+                'verified': False
+            }
     
-    return enriched_likes
+    return likes
 
 # Add new endpoints for zero engagement tweets and replies
 @app.get("/api/tweets/zero-engagement", response_model=List[Tweet])

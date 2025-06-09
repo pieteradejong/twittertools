@@ -13,6 +13,13 @@ interface TweetData {
     reply_count?: number;
     quote_count?: number;
   };
+  author?: {
+    id?: string;
+    username?: string;
+    display_name?: string;
+    avatar_url?: string;
+    verified?: boolean;
+  };
 }
 
 interface TweetListProps {
@@ -106,6 +113,7 @@ export function TweetList({ isActive, type }: TweetListProps) {
                     text={tweet.text}
                     created_at={tweet.created_at}
                     metrics={tweet.metrics}
+                    author={tweet.author}
                   />
                 );
               })}

@@ -142,6 +142,13 @@ def extract_author_from_url(expanded_url):
         if username and not any(char in username for char in ['?', '&', '=', '#']):
             return None, username  # We don't have author_id from URL, only username
     
+    # Also try to extract from other URL patterns like x.com/i/web/status/
+    pattern2 = r'(?:twitter\.com|x\.com)/i/web/status/(\d+)'
+    match2 = re.search(pattern2, expanded_url)
+    if match2:
+        # For these URLs, we can't extract username, but we have tweet ID
+        return None, None
+    
     return None, None
 
 def insert_likes(conn, likes):
@@ -240,6 +247,19 @@ def insert_users(conn, users_data):
     conn.commit()
     return count
 
+def insert_account(conn, account_data):
+    c = conn.cursor()
+    account_info = account_data[0]['account']
+    c.execute('''INSERT OR REPLACE INTO account (account_id, username, display_name, email, created_at, created_via) VALUES (?, ?, ?, ?, ?, ?)''',
+              (account_info.get('accountId'),
+               account_info.get('username'),
+               account_info.get('accountDisplayName'),
+               account_info.get('email'),
+               account_info.get('createdAt'),
+               account_info.get('createdVia')))
+    conn.commit()
+    return 1
+
 def main():
     db_path.parent.mkdir(exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -249,6 +269,13 @@ def main():
     # Load account ID from account.js
     account_js_path = data_dir / 'account.js'
     account_id = get_account_id(account_js_path)
+    
+    # Account
+    if account_js_path.exists():
+        account_data = load_json_js(account_js_path)
+        summary['account'] = insert_account(conn, account_data)
+    else:
+        summary['account'] = 0
 
     # Tweets
     tweets_path = data_dir / 'tweets.js'
