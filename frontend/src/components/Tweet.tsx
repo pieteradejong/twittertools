@@ -212,8 +212,8 @@ export function Tweet({ text, created_at, metrics, user, author, media, id, sema
       </div>
       {/* Management Panel */}
       <div className="mt-4 flex justify-start">
-        {/* Show if we have tweet id and either username or author id */}
-        {id && (username !== 'unknown' || author?.id) && (
+        {/* Always show button, but grey out if not available */}
+        {id && (username !== 'unknown' || author?.id) ? (
           <a
             href={username !== 'unknown' 
               ? `https://twitter.com/${username}/status/${id}`
@@ -225,6 +225,14 @@ export function Tweet({ text, created_at, metrics, user, author, media, id, sema
           >
             View on Twitter
           </a>
+        ) : (
+          <button
+            disabled
+            className="inline-block px-4 py-2 bg-gray-100 text-gray-400 rounded-full font-semibold shadow cursor-not-allowed text-sm"
+            title="Tweet link not available"
+          >
+            View on Twitter
+          </button>
         )}
       </div>
     </div>
