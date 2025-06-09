@@ -1488,50 +1488,11 @@ async def run_enrichment(
         logger.error(f"Error running enrichment: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/enrichment/text-patterns")
-async def run_text_pattern_enrichment(
-    service: LocalTwitterService = Depends(get_local_twitter_service)
-):
-    """Run text-based pattern enrichment for tweet authors."""
-    try:
-        from .text_based_enrichment import TextBasedEnrichmentService
-        
-        text_service = TextBasedEnrichmentService(service.db_path)
-        enriched_count = text_service.enrich_likes_from_text()
-        
-        return {
-            "message": "Text pattern enrichment completed",
-            "enriched_count": enriched_count,
-            "method": "text_patterns"
-        }
-        
-    except Exception as e:
-        logger.error(f"Text pattern enrichment failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 
-@app.post("/api/enrichment/multi-method")
-async def run_multi_method_enrichment(
-    limit: int = Query(100, ge=1, le=500, description="Number of tweets to process"),
-    service: LocalTwitterService = Depends(get_local_twitter_service)
-):
-    """Run multi-method enrichment using API, Nitter, and text patterns."""
-    try:
-        from .alternative_api_enrichment import AlternativeAPIEnrichmentService
-        
-        multi_service = AlternativeAPIEnrichmentService(service.db_path)
-        stats = multi_service.enrich_with_multiple_methods(limit=limit)
-        
-        return {
-            "message": "Multi-method enrichment completed",
-            "stats": stats,
-            "method": "multi_method"
-        }
-        
-    except Exception as e:
-        logger.error(f"Multi-method enrichment failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @app.get("/api/blocks")
 async def get_blocks(
@@ -1729,28 +1690,7 @@ async def run_list_enrichment(
         logger.error(f"List enrichment failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============================================================================
-# COMPREHENSIVE X API ENDPOINTS
-# ============================================================================
 
-@app.get("/api/comprehensive/stats")
-async def get_comprehensive_api_stats():
-    """Get statistics about all comprehensive API data."""
-    try:
-        from .comprehensive_x_api_service import ComprehensiveXAPIService
-        
-        service = ComprehensiveXAPIService()
-        stats = service.get_cached_data_stats()
-        api_usage = service.get_api_usage_stats(hours=24)
-        
-        return {
-            "cached_data": stats,
-            "api_usage_24h": api_usage,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error getting comprehensive API stats: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/comprehensive/fetch/tweets")
 async def fetch_comprehensive_tweets(
