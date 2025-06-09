@@ -25,6 +25,39 @@ def load_json_js(filepath):
             content = content[json_start:].strip().rstrip(';')
         return json.loads(content)
 
+def migrate_database(conn):
+    """Migrate existing database to new schema"""
+    c = conn.cursor()
+    
+    # Check if users table has the new columns
+    cursor = c.execute("PRAGMA table_info(users)")
+    columns = [row[1] for row in cursor.fetchall()]
+    
+    # Add missing columns to users table
+    new_columns = {
+        'avatar_url': 'TEXT',
+        'bio': 'TEXT', 
+        'verified': 'BOOLEAN DEFAULT 0',
+        'follower_count': 'INTEGER',
+        'following_count': 'INTEGER',
+        'tweet_count': 'INTEGER',
+        'location': 'TEXT',
+        'website': 'TEXT',
+        'created_at': 'TEXT',
+        'last_updated': 'TEXT',
+        'profile_source': 'TEXT DEFAULT "local"'
+    }
+    
+    for column_name, column_type in new_columns.items():
+        if column_name not in columns:
+            try:
+                c.execute(f'ALTER TABLE users ADD COLUMN {column_name} {column_type}')
+                print(f"Added column {column_name} to users table")
+            except Exception as e:
+                print(f"Could not add column {column_name}: {e}")
+    
+    conn.commit()
+
 def create_tables(conn):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS tweets (
@@ -68,7 +101,18 @@ def create_tables(conn):
         id TEXT PRIMARY KEY, -- user.accountId or id
         username TEXT, -- user.screenName or username
         display_name TEXT, -- user.name or displayName
-        user_link TEXT -- user.userLink
+        user_link TEXT, -- user.userLink
+        avatar_url TEXT, -- profile image URL (from API)
+        bio TEXT, -- user bio/description (from API)
+        verified BOOLEAN DEFAULT 0, -- verified status (from API)
+        follower_count INTEGER, -- follower count (from API)
+        following_count INTEGER, -- following count (from API)
+        tweet_count INTEGER, -- tweet count (from API)
+        location TEXT, -- user location (from API)
+        website TEXT, -- user website (from API)
+        created_at TEXT, -- account creation date (from API)
+        last_updated TEXT, -- when profile was last fetched
+        profile_source TEXT DEFAULT 'local' -- 'local', 'api', 'enriched'
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS media (
         media_id TEXT PRIMARY KEY, -- media id
@@ -92,6 +136,30 @@ def create_tables(conn):
         avatar_url TEXT, -- profile.avatarMediaUrl
         header_url TEXT -- profile.headerMediaUrl
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS relationships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_user_id TEXT, -- the user who initiated the relationship
+        target_user_id TEXT, -- the user who is the target of the relationship
+        relationship_type TEXT, -- 'following', 'follower', 'blocked', 'muted', 'mentioned', etc.
+        created_at TEXT, -- when this relationship was established
+        discovered_at TEXT DEFAULT CURRENT_TIMESTAMP, -- when we discovered this relationship
+        status TEXT DEFAULT 'active', -- 'active', 'inactive', 'unknown'
+        source TEXT DEFAULT 'local', -- 'local' (from archive), 'api', 'inferred'
+        UNIQUE(source_user_id, target_user_id, relationship_type)
+    )''')
+    conn.commit()
+
+def create_indexes(conn):
+    """Create indexes after migration is complete"""
+    c = conn.cursor()
+    try:
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_relationships_source ON relationships(source_user_id, relationship_type)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_user_id, relationship_type)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_users_profile_source ON users(profile_source)''')
+        print("Created database indexes")
+    except Exception as e:
+        print(f"Could not create some indexes: {e}")
     conn.commit()
 
 def get_account_id(account_js_path):
@@ -247,6 +315,31 @@ def insert_users(conn, users_data):
     conn.commit()
     return count
 
+def insert_relationships(conn, relationships_data, relationship_type, source_user_id):
+    """Insert relationship data (followers/following) into the relationships table"""
+    c = conn.cursor()
+    count = 0
+    for entry in relationships_data:
+        # Handle both follower and following data structures
+        user_data = entry.get('follower') or entry.get('following') or entry
+        target_user_id = user_data.get('accountId')
+        
+        if target_user_id:
+            # For following: source_user_id follows target_user_id
+            # For follower: target_user_id follows source_user_id (so we flip them)
+            if relationship_type == 'following':
+                src_id, tgt_id = source_user_id, target_user_id
+            else:  # follower
+                src_id, tgt_id = target_user_id, source_user_id
+                
+            c.execute('''INSERT OR IGNORE INTO relationships 
+                         (source_user_id, target_user_id, relationship_type, source) 
+                         VALUES (?, ?, ?, ?)''',
+                      (src_id, tgt_id, relationship_type, 'local'))
+            count += 1
+    conn.commit()
+    return count
+
 def insert_account(conn, account_data):
     c = conn.cursor()
     account_info = account_data[0]['account']
@@ -264,6 +357,8 @@ def main():
     db_path.parent.mkdir(exist_ok=True)
     conn = sqlite3.connect(db_path)
     create_tables(conn)
+    migrate_database(conn)  # Migrate existing database
+    create_indexes(conn)  # Create indexes after migration
     summary = {}
 
     # Load account ID from account.js
@@ -313,14 +408,19 @@ def main():
             summary[f'lists_{ltype}'] = insert_lists(conn, lists_data, ltype)
         else:
             summary[f'lists_{ltype}'] = 0
-    # Users (followers and following)
+    # Users and Relationships (followers and following)
     for fname, utype in [('follower.js', 'follower'), ('following.js', 'following')]:
         path = data_dir / fname
         if path.exists():
             users_data = load_json_js(path)
-            summary[utype] = insert_users(conn, users_data)
+            # Insert users first (basic user records)
+            summary[f'{utype}_users'] = insert_users(conn, users_data)
+            # Insert relationships 
+            relationship_type = 'following' if utype == 'following' else 'follower'
+            summary[f'{utype}_relationships'] = insert_relationships(conn, users_data, relationship_type, account_id)
         else:
-            summary[utype] = 0
+            summary[f'{utype}_users'] = 0
+            summary[f'{utype}_relationships'] = 0
     # Profile
     profile_path = data_dir / 'profile.js'
     if profile_path.exists():

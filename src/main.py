@@ -1156,55 +1156,74 @@ async def get_following(
                 raise HTTPException(status_code=404, detail="User account not found")
             user_id = user_row[0]
             
-            # Get following relationships with user details
-            cursor = conn.execute("""
-                SELECT 
-                    r.target_user_id,
-                    COALESCE(uc.username, u.username) as username,
-                    COALESCE(uc.name, u.display_name) as display_name,
-                    u.user_link,
-                    uc.profile_image_url,
-                    uc.verified,
-                    uc.public_metrics,
-                    r.created_at as relationship_created_at
-                FROM relationships r
-                LEFT JOIN users u ON r.target_user_id = u.id
-                LEFT JOIN users_comprehensive uc ON r.target_user_id = uc.id
-                WHERE r.source_user_id = ? AND r.relationship_type = 'following'
-                ORDER BY COALESCE(uc.name, u.display_name), r.target_user_id
-                LIMIT ? OFFSET ?
-            """, (user_id, limit, offset))
+            # Check if we have the new relationships table
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='relationships'")
+            has_relationships_table = cursor.fetchone() is not None
+            
+            if has_relationships_table:
+                # Use the new relationships table
+                cursor = conn.execute("""
+                    SELECT 
+                        r.target_user_id,
+                        u.username,
+                        u.display_name,
+                        u.user_link,
+                        u.avatar_url,
+                        u.verified,
+                        u.follower_count,
+                        u.following_count,
+                        u.tweet_count,
+                        r.created_at as relationship_created_at
+                    FROM relationships r
+                    LEFT JOIN users u ON r.target_user_id = u.id
+                    WHERE r.source_user_id = ? AND r.relationship_type = 'following'
+                    ORDER BY u.display_name, r.target_user_id
+                    LIMIT ? OFFSET ?
+                """, (user_id, limit, offset))
+                
+                # Get total count
+                cursor_count = conn.execute("""
+                    SELECT COUNT(*) FROM relationships 
+                    WHERE source_user_id = ? AND relationship_type = 'following'
+                """, (user_id,))
+                total_count = cursor_count.fetchone()[0]
+            else:
+                # Fallback to the old users table approach
+                cursor = conn.execute("""
+                    SELECT 
+                        u.id,
+                        u.username,
+                        u.display_name,
+                        u.user_link,
+                        u.avatar_url,
+                        u.verified,
+                        u.follower_count,
+                        u.following_count,
+                        u.tweet_count,
+                        NULL as relationship_created_at
+                    FROM users u
+                    ORDER BY u.display_name, u.id
+                    LIMIT ? OFFSET ?
+                """, (limit, offset))
+                
+                # Get total count
+                cursor_count = conn.execute("SELECT COUNT(*) FROM users")
+                total_count = cursor_count.fetchone()[0]
             
             following = []
             for row in cursor.fetchall():
-                # Parse public metrics if available
-                public_metrics = {}
-                if row[6]:  # public_metrics column
-                    try:
-                        import json
-                        public_metrics = json.loads(row[6])
-                    except:
-                        pass
-                
                 following.append({
                     "id": row[0],
                     "username": row[1] or f"user_{row[0][-8:]}",
                     "display_name": row[2] or f"User {row[0][-8:]}",
                     "user_link": row[3],
-                    "avatar_url": row[4],  # profile_image_url from comprehensive table
+                    "avatar_url": row[4],
                     "verified": bool(row[5]) if row[5] is not None else False,
-                    "follower_count": public_metrics.get('followers_count'),
-                    "following_count": public_metrics.get('following_count'),
-                    "tweet_count": public_metrics.get('tweet_count'),
-                    "relationship_created_at": row[7]
+                    "follower_count": row[6],
+                    "following_count": row[7],
+                    "tweet_count": row[8],
+                    "relationship_created_at": row[9]
                 })
-            
-            # Get total count
-            cursor = conn.execute("""
-                SELECT COUNT(*) FROM relationships 
-                WHERE source_user_id = ? AND relationship_type = 'following'
-            """, (user_id,))
-            total_count = cursor.fetchone()[0]
             
             return {
                 "following": following,
@@ -1231,55 +1250,61 @@ async def get_followers(
                 raise HTTPException(status_code=404, detail="User account not found")
             user_id = user_row[0]
             
-            # Get follower relationships with user details
-            cursor = conn.execute("""
-                SELECT 
-                    r.source_user_id,
-                    COALESCE(uc.username, u.username) as username,
-                    COALESCE(uc.name, u.display_name) as display_name,
-                    u.user_link,
-                    uc.profile_image_url,
-                    uc.verified,
-                    uc.public_metrics,
-                    r.created_at as relationship_created_at
-                FROM relationships r
-                LEFT JOIN users u ON r.source_user_id = u.id
-                LEFT JOIN users_comprehensive uc ON r.source_user_id = uc.id
-                WHERE r.target_user_id = ? AND r.relationship_type = 'follower'
-                ORDER BY COALESCE(uc.name, u.display_name), r.source_user_id
-                LIMIT ? OFFSET ?
-            """, (user_id, limit, offset))
+            # Check if we have the new relationships table
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='relationships'")
+            has_relationships_table = cursor.fetchone() is not None
+            
+            if has_relationships_table:
+                # Use the new relationships table
+                cursor = conn.execute("""
+                    SELECT 
+                        r.source_user_id,
+                        u.username,
+                        u.display_name,
+                        u.user_link,
+                        u.avatar_url,
+                        u.verified,
+                        u.follower_count,
+                        u.following_count,
+                        u.tweet_count,
+                        r.created_at as relationship_created_at
+                    FROM relationships r
+                    LEFT JOIN users u ON r.source_user_id = u.id
+                    WHERE r.target_user_id = ? AND r.relationship_type = 'follower'
+                    ORDER BY u.display_name, r.source_user_id
+                    LIMIT ? OFFSET ?
+                """, (user_id, limit, offset))
+                
+                # Get total count
+                cursor_count = conn.execute("""
+                    SELECT COUNT(*) FROM relationships 
+                    WHERE target_user_id = ? AND relationship_type = 'follower'
+                """, (user_id,))
+                total_count = cursor_count.fetchone()[0]
+            else:
+                # Fallback: return empty list since we can't distinguish followers from following without relationships table
+                return {
+                    "followers": [],
+                    "total_count": 0,
+                    "limit": limit,
+                    "offset": offset,
+                    "message": "Relationships data not available. Please reload data with updated schema."
+                }
             
             followers = []
             for row in cursor.fetchall():
-                # Parse public metrics if available
-                public_metrics = {}
-                if row[6]:  # public_metrics column
-                    try:
-                        import json
-                        public_metrics = json.loads(row[6])
-                    except:
-                        pass
-                
                 followers.append({
                     "id": row[0],
                     "username": row[1] or f"user_{row[0][-8:]}",
                     "display_name": row[2] or f"User {row[0][-8:]}",
                     "user_link": row[3],
-                    "avatar_url": row[4],  # profile_image_url from comprehensive table
+                    "avatar_url": row[4],
                     "verified": bool(row[5]) if row[5] is not None else False,
-                    "follower_count": public_metrics.get('followers_count'),
-                    "following_count": public_metrics.get('following_count'),
-                    "tweet_count": public_metrics.get('tweet_count'),
-                    "relationship_created_at": row[7]
+                    "follower_count": row[6],
+                    "following_count": row[7],
+                    "tweet_count": row[8],
+                    "relationship_created_at": row[9]
                 })
-            
-            # Get total count
-            cursor = conn.execute("""
-                SELECT COUNT(*) FROM relationships 
-                WHERE target_user_id = ? AND relationship_type = 'follower'
-            """, (user_id,))
-            total_count = cursor.fetchone()[0]
             
             return {
                 "followers": followers,
@@ -2092,6 +2117,168 @@ async def get_comprehensive_users_data(
 # ============================================================================
 # END COMPREHENSIVE X API ENDPOINTS
 # ============================================================================
+
+@app.post("/api/profiles/enrich")
+async def enrich_user_profiles(
+    limit: int = Query(50, ge=1, le=100, description="Number of profiles to enrich"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Fetch and store profile data for users in relationships who don't have profile data."""
+    try:
+        client = get_twitter_client()
+        if not client or not client.client:
+            raise HTTPException(status_code=503, detail="Twitter API not available")
+        
+        with sqlite3.connect(service.db_path) as conn:
+            # Get users who need profile enrichment (no username or very basic data)
+            cursor = conn.execute("""
+                SELECT DISTINCT u.id 
+                FROM users u
+                WHERE (u.username IS NULL OR u.username LIKE 'user_%') 
+                AND (u.profile_source IS NULL OR u.profile_source = 'local')
+                AND u.id IN (
+                    SELECT target_user_id FROM relationships 
+                    UNION 
+                    SELECT source_user_id FROM relationships
+                )
+                LIMIT ?
+            """, (limit,))
+            
+            user_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not user_ids:
+                return {
+                    "message": "No users need profile enrichment",
+                    "enriched_count": 0,
+                    "total_users": 0
+                }
+            
+            enriched_count = 0
+            failed_count = 0
+            
+            # Fetch users in batches (Twitter API allows up to 100 users per request)
+            batch_size = 100
+            for i in range(0, len(user_ids), batch_size):
+                batch_ids = user_ids[i:i + batch_size]
+                
+                try:
+                    # Fetch user data from Twitter API
+                    users_response = client.client.get_users(
+                        ids=batch_ids,
+                        user_fields=['username', 'name', 'description', 'location', 'url', 'verified', 'profile_image_url', 'public_metrics', 'created_at']
+                    )
+                    
+                    if users_response.data:
+                        for user in users_response.data:
+                            try:
+                                # Update user profile in database
+                                c = conn.cursor()
+                                c.execute("""
+                                    UPDATE users SET 
+                                        username = ?,
+                                        display_name = ?,
+                                        bio = ?,
+                                        location = ?,
+                                        website = ?,
+                                        verified = ?,
+                                        avatar_url = ?,
+                                        follower_count = ?,
+                                        following_count = ?,
+                                        tweet_count = ?,
+                                        created_at = ?,
+                                        last_updated = CURRENT_TIMESTAMP,
+                                        profile_source = 'api'
+                                    WHERE id = ?
+                                """, (
+                                    user.username,
+                                    user.name,
+                                    user.description,
+                                    user.location,
+                                    user.url,
+                                    user.verified or False,
+                                    user.profile_image_url,
+                                    user.public_metrics.get('followers_count') if user.public_metrics else None,
+                                    user.public_metrics.get('following_count') if user.public_metrics else None,
+                                    user.public_metrics.get('tweet_count') if user.public_metrics else None,
+                                    user.created_at.isoformat() if user.created_at else None,
+                                    user.id
+                                ))
+                                enriched_count += 1
+                                
+                            except Exception as e:
+                                print(f"Error updating user {user.id}: {e}")
+                                failed_count += 1
+                        
+                        conn.commit()
+                        
+                    # Rate limiting: sleep between batches
+                    import time
+                    time.sleep(1)
+                    
+                except tweepy.TooManyRequests:
+                    return {
+                        "message": f"Rate limited after enriching {enriched_count} profiles",
+                        "enriched_count": enriched_count,
+                        "failed_count": failed_count,
+                        "total_users": len(user_ids)
+                    }
+                except Exception as e:
+                    print(f"Error fetching batch starting at index {i}: {e}")
+                    failed_count += len(batch_ids)
+            
+            return {
+                "message": f"Successfully enriched {enriched_count} user profiles",
+                "enriched_count": enriched_count,
+                "failed_count": failed_count,
+                "total_users": len(user_ids)
+            }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/profiles/stats")
+async def get_profile_stats(service: LocalTwitterService = Depends(get_local_twitter_service)):
+    """Get statistics about profile data availability."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT 
+                    COUNT(*) as total_users,
+                    COUNT(CASE WHEN profile_source = 'api' THEN 1 END) as api_profiles,
+                    COUNT(CASE WHEN profile_source = 'local' THEN 1 END) as local_profiles,
+                    COUNT(CASE WHEN username IS NOT NULL AND NOT username LIKE 'user_%' THEN 1 END) as with_username,
+                    COUNT(CASE WHEN avatar_url IS NOT NULL THEN 1 END) as with_avatar,
+                    COUNT(CASE WHEN verified = 1 THEN 1 END) as verified_users
+                FROM users
+            """)
+            
+            stats = cursor.fetchone()
+            
+            # Get relationship stats
+            cursor = conn.execute("""
+                SELECT 
+                    relationship_type,
+                    COUNT(*) as count
+                FROM relationships 
+                GROUP BY relationship_type
+            """)
+            
+            relationships = dict(cursor.fetchall())
+            
+            return {
+                "users": {
+                    "total": stats[0],
+                    "with_api_profiles": stats[1], 
+                    "with_local_profiles": stats[2],
+                    "with_usernames": stats[3],
+                    "with_avatars": stats[4],
+                    "verified": stats[5]
+                },
+                "relationships": relationships
+            }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # CLI functionality
 def main():
