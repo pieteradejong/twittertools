@@ -1,4 +1,5 @@
 import { MenuItem } from './MenuItem';
+import { useState } from 'react';
 
 interface SidebarProps {
   activeTab: string;
@@ -66,6 +67,35 @@ const NAV_ITEMS = [
     )
   },
   { 
+    label: "Topic Analysis - Tweets", 
+    value: "topic-tweets", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+      </svg>
+    )
+  },
+  { 
+    label: "Topic Analysis - Likes", 
+    value: "topic-likes", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+      </svg>
+    )
+  },
+  { 
+    label: "Topic Analysis - Replies", 
+    value: "topic-replies", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+      </svg>
+    )
+  },
+  { 
     label: "Bookmarks", 
     value: "bookmarks", 
     icon: (
@@ -99,6 +129,15 @@ const NAV_ITEMS = [
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+      </svg>
+    )
+  },
+  { 
+    label: "Profile Info", 
+    value: "profile-info", 
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
       </svg>
     )
   },
@@ -143,6 +182,8 @@ const NAV_ITEMS = [
 ];
 
 export function Sidebar({ activeTab, onTabChange, profile, profileLoading }: SidebarProps) {
+  const [isStatsExpanded, setIsStatsExpanded] = useState(false);
+  
   return (
     <nav className="w-80 border-r border-gray-200 bg-white flex flex-col">
       {/* Twitter Logo & Header */}
@@ -173,45 +214,76 @@ export function Sidebar({ activeTab, onTabChange, profile, profileLoading }: Sid
         ) : profile ? (
           <div>
             <h2 className="text-lg font-semibold text-gray-900">
-              Hi @{profile.username},
+              Hi @{profile.username}
             </h2>
-            {/* Stats Panel */}
-            <div className="mt-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
-              <div className="grid grid-cols-2 gap-2 text-xs text-gray-700">
-                <div className="font-medium">Tweets</div>
-                <div className="text-right">{profile.stats.tweet_count}</div>
-                <div className="font-medium">Replies</div>
-                <div className="text-right">{profile.stats.reply_count}</div>
-                <div className="font-medium">Likes</div>
-                <div className="text-right">{profile.stats.like_count}</div>
-                <div className="font-medium">Bookmarks</div>
-                <div className="text-right">{profile.stats.bookmark_count || 0}</div>
-                <div className="font-medium">Following</div>
-                <div className="text-right">{profile.stats.following_count || 0}</div>
-                <div className="font-medium">Lists</div>
-                <div className="text-right">{profile.stats.lists_count || 0}</div>
-                <div className="font-medium">Blocked</div>
-                <div className="text-right">{profile.stats.blocks_count || 0}</div>
-                <div className="font-medium">Muted</div>
-                <div className="text-right">{profile.stats.mutes_count || 0}</div>
-                <div className="font-medium">Direct Messages</div>
-                <div className="text-right">{profile.stats.dm_count || 0}</div>
-                <div className="font-medium">Zero Engagement Tweets</div>
-                <div className="text-right">{profile.stats.zero_engagement_tweets}</div>
-                <div className="font-medium">Zero Engagement Replies</div>
-                <div className="text-right">{profile.stats.zero_engagement_replies}</div>
+            
+            {/* Compact Stats with Expand/Collapse */}
+            <div className="mt-3">
+              <button
+                onClick={() => setIsStatsExpanded(!isStatsExpanded)}
+                className="w-full flex items-center justify-between p-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <span>Quick Stats</span>
+                <svg 
+                  className={`w-4 h-4 transition-transform ${isStatsExpanded ? 'rotate-180' : ''}`}
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              
+              {/* Always show key stats */}
+              <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-gray-700">
+                <div className="text-center">
+                  <div className="font-semibold text-blue-600">{profile.stats.tweet_count}</div>
+                  <div>Tweets</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-semibold text-red-600">{profile.stats.like_count}</div>
+                  <div>Likes</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-semibold text-green-600">{profile.stats.zero_engagement_tweets}</div>
+                  <div>Zero Eng.</div>
+                </div>
               </div>
-            </div>
-            {/* Profile Info Panel */}
-            <div className="mt-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
-              <div className="text-xs text-gray-700 space-y-1">
-                <div><span className="font-medium">Display Name:</span> {profile.display_name}</div>
-                <div><span className="font-medium">Username:</span> @{profile.username}</div>
-                <div><span className="font-medium">Joined:</span> {profile.created_at}</div>
-                {profile.bio && <div><span className="font-medium">Bio:</span> {profile.bio}</div>}
-                {profile.website && <div><span className="font-medium">Website:</span> <a href={profile.website} className="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">{profile.website}</a></div>}
-                {profile.location && <div><span className="font-medium">Location:</span> {profile.location}</div>}
-              </div>
+              
+              {/* Expanded stats */}
+              {isStatsExpanded && (
+                <div className="mt-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
+                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-700">
+                    <div className="font-medium">Replies</div>
+                    <div className="text-right">{profile.stats.reply_count}</div>
+                    <div className="font-medium">Bookmarks</div>
+                    <div className="text-right">{profile.stats.bookmark_count || 0}</div>
+                    <div className="font-medium">Following</div>
+                    <div className="text-right">{profile.stats.following_count || 0}</div>
+                    <div className="font-medium">Lists</div>
+                    <div className="text-right">{profile.stats.lists_count || 0}</div>
+                    <div className="font-medium">Blocked</div>
+                    <div className="text-right">{profile.stats.blocks_count || 0}</div>
+                    <div className="font-medium">Muted</div>
+                    <div className="text-right">{profile.stats.mutes_count || 0}</div>
+                    <div className="font-medium">Direct Messages</div>
+                    <div className="text-right">{profile.stats.dm_count || 0}</div>
+                    <div className="font-medium">Zero Engagement Replies</div>
+                    <div className="text-right">{profile.stats.zero_engagement_replies}</div>
+                  </div>
+                  
+                  {/* Profile Details */}
+                  <div className="mt-3 pt-3 border-t border-gray-300">
+                    <div className="text-xs text-gray-700 space-y-1">
+                      <div><span className="font-medium">Display Name:</span> {profile.display_name}</div>
+                      <div><span className="font-medium">Joined:</span> {profile.created_at}</div>
+                      {profile.bio && <div><span className="font-medium">Bio:</span> {profile.bio}</div>}
+                      {profile.website && <div><span className="font-medium">Website:</span> <a href={profile.website} className="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">{profile.website}</a></div>}
+                      {profile.location && <div><span className="font-medium">Location:</span> {profile.location}</div>}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (

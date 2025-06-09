@@ -1447,6 +1447,190 @@ async def run_classification():
         logger.error(f"Error starting classification: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Topic Analysis endpoints
+@app.get("/api/topics/overview")
+async def get_topic_overview():
+    """Get comprehensive topic distribution overview."""
+    try:
+        from .topic_analyzer import TopicAnalyzer
+        analyzer = TopicAnalyzer()
+        return analyzer.get_topic_distribution()
+    except Exception as e:
+        logger.error(f"Error getting topic overview: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/topics/analyze/{data_source}")
+async def analyze_data_source(
+    data_source: str,
+    limit: int = Query(100, ge=1, le=1000),
+    custom_query: str = Query(None, description="Custom SQL query for data selection")
+):
+    """Analyze a specific data source for topics."""
+    try:
+        from .topic_analyzer import TopicAnalyzer, DataSource
+        
+        # Validate data source
+        try:
+            source_enum = DataSource(data_source.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid data source: {data_source}")
+        
+        analyzer = TopicAnalyzer()
+        results = analyzer.analyze_data_source(source_enum, limit, custom_query)
+        
+        # Convert results to JSON-serializable format
+        return {
+            "data_source": data_source,
+            "total_analyzed": len(results),
+            "results": [
+                {
+                    "item_id": r.item_id,
+                    "text": r.text[:200] + "..." if len(r.text) > 200 else r.text,
+                    "topic_scores": r.topic_scores,
+                    "assigned_topics": r.assigned_topics,
+                    "max_score": r.max_score,
+                    "metadata": r.metadata
+                } for r in results
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error analyzing data source: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/topics/filter")
+async def filter_by_topics(
+    data_source: str = Body(..., description="Data source to filter"),
+    topics: List[str] = Body([], description="Topics to include (empty = all)"),
+    exclude_topics: List[str] = Body([], description="Topics to exclude"),
+    min_score: float = Body(0.3, ge=0.0, le=1.0, description="Minimum similarity score"),
+    max_results: int = Body(100, ge=1, le=1000, description="Maximum results"),
+    sort_by: str = Body("score", description="Sort criteria: score, date, relevance")
+):
+    """Filter data by topic criteria."""
+    try:
+        from .topic_analyzer import TopicAnalyzer, DataSource, TopicFilter
+        
+        # Validate data source
+        try:
+            source_enum = DataSource(data_source.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid data source: {data_source}")
+        
+        # Create filter configuration
+        topic_filter = TopicFilter(
+            topics=topics,
+            exclude_topics=exclude_topics,
+            min_score=min_score,
+            max_results=max_results,
+            sort_by=sort_by
+        )
+        
+        analyzer = TopicAnalyzer()
+        results = analyzer.filter_by_topics(source_enum, topic_filter)
+        
+        return {
+            "data_source": data_source,
+            "filter_criteria": {
+                "topics": topics,
+                "exclude_topics": exclude_topics,
+                "min_score": min_score,
+                "sort_by": sort_by
+            },
+            "total_results": len(results),
+            "results": results
+        }
+    except Exception as e:
+        logger.error(f"Error filtering by topics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/topics/search")
+async def semantic_search_topics(
+    query: str = Query(..., description="Semantic search query"),
+    data_source: str = Query(None, description="Specific data source to search"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum results")
+):
+    """Perform semantic search across topic-classified data."""
+    try:
+        from .topic_analyzer import TopicAnalyzer, DataSource
+        
+        analyzer = TopicAnalyzer()
+        
+        # Validate data source if provided
+        source_enum = None
+        if data_source:
+            try:
+                source_enum = DataSource(data_source.lower())
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid data source: {data_source}")
+        
+        results = analyzer.semantic_search(query, source_enum, limit)
+        
+        return {
+            "query": query,
+            "data_source": data_source,
+            "total_results": len(results),
+            "results": results
+        }
+    except Exception as e:
+        logger.error(f"Error in semantic search: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/topics/add-custom")
+async def add_custom_topic(
+    topic_name: str = Body(..., description="Name of the new topic"),
+    seed_phrases: List[str] = Body(..., description="Seed phrases that define the topic")
+):
+    """Add a custom topic definition."""
+    try:
+        from .topic_analyzer import TopicAnalyzer
+        
+        if not seed_phrases:
+            raise HTTPException(status_code=400, detail="At least one seed phrase is required")
+        
+        analyzer = TopicAnalyzer()
+        analyzer.add_custom_topic(topic_name, seed_phrases)
+        
+        return {
+            "message": f"Successfully added custom topic '{topic_name}'",
+            "topic_name": topic_name,
+            "seed_phrases": seed_phrases,
+            "total_phrases": len(seed_phrases)
+        }
+    except Exception as e:
+        logger.error(f"Error adding custom topic: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/topics/export/{data_source}")
+async def export_topic_analysis(
+    data_source: str,
+    format: str = Query("json", description="Export format: json or csv")
+):
+    """Export topic analysis results."""
+    try:
+        from .topic_analyzer import TopicAnalyzer, DataSource
+        
+        # Validate data source
+        try:
+            source_enum = DataSource(data_source.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid data source: {data_source}")
+        
+        if format.lower() not in ["json", "csv"]:
+            raise HTTPException(status_code=400, detail="Format must be 'json' or 'csv'")
+        
+        analyzer = TopicAnalyzer()
+        file_path = analyzer.export_topic_analysis(source_enum, format.lower())
+        
+        return {
+            "message": f"Topic analysis exported successfully",
+            "file_path": file_path,
+            "format": format.lower(),
+            "data_source": data_source
+        }
+    except Exception as e:
+        logger.error(f"Error exporting topic analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/enrichment/stats")
 async def get_enrichment_stats(service: LocalTwitterService = Depends(get_local_twitter_service)):
     """Get tweet enrichment statistics."""

@@ -1,12 +1,13 @@
 import { SimpleTweetList } from "../tweets/SimpleTweetList";
 import { SemanticTweetList } from "../tweets/SemanticTweetList";
+import { TopicAnalysisView } from "../tweets/TopicAnalysisView";
 import { ReplyList } from "../communication/ReplyList";
 import { FollowingList } from "../users/FollowingList";
 import { FollowersList } from "../users/FollowersList";
 import { UserList } from "../users/UserList";
 import { DirectMessageList } from "../communication/DirectMessageList";
 import { ListsList } from "../users/ListsList";
-import { ProfileEnrichment } from "../profile/ProfileEnrichment";
+import { ProfileEnrichment, ProfileInfo } from "../profile";
 import type { ComponentType } from "react";
 
 interface TabConfig {
@@ -29,6 +30,18 @@ const TAB_COMPONENTS: Record<string, TabConfig> = {
     component: SemanticTweetList,
     props: { isActive: true }
   },
+  'topic-tweets': {
+    component: TopicAnalysisView,
+    props: { isActive: true, dataSource: 'tweets', title: 'Tweet Topic Analysis', showCustomTopics: true }
+  },
+  'topic-likes': {
+    component: TopicAnalysisView,
+    props: { isActive: true, dataSource: 'likes', title: 'Likes Topic Analysis', showCustomTopics: true }
+  },
+  'topic-replies': {
+    component: TopicAnalysisView,
+    props: { isActive: true, dataSource: 'replies', title: 'Replies Topic Analysis' }
+  },
   'bookmarks': {
     component: SimpleTweetList,
     props: { isActive: true, type: 'bookmarks' }
@@ -43,6 +56,10 @@ const TAB_COMPONENTS: Record<string, TabConfig> = {
   },
   'followers': {
     component: FollowersList,
+    props: { isActive: true }
+  },
+  'profile-info': {
+    component: ProfileInfo,
     props: { isActive: true }
   },
   'profile-enrichment': {
@@ -102,11 +119,37 @@ function PlaceholderTab({ tabName }: PlaceholderTabProps) {
   );
 }
 
-interface TabRouterProps {
-  activeTab: string;
+interface ProfileData {
+  username: string;
+  display_name?: string;
+  created_at?: string;
+  bio?: string;
+  website?: string;
+  location?: string;
+  avatar_url?: string;
+  verified?: boolean;
+  stats: {
+    tweet_count: number;
+    like_count: number;
+    reply_count: number;
+    bookmark_count: number;
+    blocks_count: number;
+    mutes_count: number;
+    dm_count: number;
+    lists_count: number;
+    following_count: number;
+    zero_engagement_tweets: number;
+    zero_engagement_replies: number;
+  };
 }
 
-export function TabRouter({ activeTab }: TabRouterProps) {
+interface TabRouterProps {
+  activeTab: string;
+  profile?: ProfileData;
+  profileLoading?: boolean;
+}
+
+export function TabRouter({ activeTab, profile, profileLoading }: TabRouterProps) {
   const tabConfig = TAB_COMPONENTS[activeTab];
   
   if (!tabConfig) {
@@ -114,5 +157,12 @@ export function TabRouter({ activeTab }: TabRouterProps) {
   }
   
   const { component: Component, props = {} } = tabConfig;
-  return <Component {...props} />;
+  
+  // Pass profile data to components that need it
+  const componentProps = {
+    ...props,
+    ...(activeTab === 'profile-info' && { profile, profileLoading })
+  };
+  
+  return <Component {...componentProps} />;
 } 

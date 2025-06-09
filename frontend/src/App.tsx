@@ -66,7 +66,7 @@ export default function App() {
         />
       }
     >
-      <MainContent activeTab={activeTab} />
+      <MainContent activeTab={activeTab} profile={profile} profileLoading={profileLoading} />
     </Layout>
   );
 }

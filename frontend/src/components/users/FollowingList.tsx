@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
+import { ProfileLinkWithOptions } from '../common/ProfileLink';
 
 interface Following {
   id: string;
@@ -125,14 +126,14 @@ export function FollowingList({ isActive }: { isActive: boolean }) {
                 </div>
                 
                 <div className="flex items-center gap-4">
-                  <a 
-                    href={user.user_link || `https://twitter.com/intent/user?user_id=${user.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 text-sm font-medium hover:underline"
-                  >
-                    View Profile
-                  </a>
+                  <ProfileLinkWithOptions 
+                    user={{
+                      id: user.id,
+                      username: user.username,
+                      user_link: user.user_link
+                    }}
+                    className="text-sm font-medium"
+                  />
                   {user.relationship_created_at && (
                     <span className="text-xs text-gray-400">
                       Following since {new Date(user.relationship_created_at).toLocaleDateString()}
