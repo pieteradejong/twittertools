@@ -1,11 +1,11 @@
-import { TweetList } from "../tweets/TweetList";
+import { SimpleTweetList } from "../tweets/SimpleTweetList";
+import { SemanticTweetList } from "../tweets/SemanticTweetList";
 import { ReplyList } from "../communication/ReplyList";
 import { FollowingList } from "../users/FollowingList";
 import { FollowersList } from "../users/FollowersList";
 import { UserList } from "../users/UserList";
 import { DirectMessageList } from "../communication/DirectMessageList";
 import { ListsList } from "../users/ListsList";
-import { SemanticLikesFilter } from "../tweets/SemanticLikesFilter";
 import { ProfileEnrichment } from "../profile/ProfileEnrichment";
 import type { ComponentType } from "react";
 
@@ -18,19 +18,19 @@ interface TabConfig {
 
 const TAB_COMPONENTS: Record<string, TabConfig> = {
   'tweets': {
-    component: TweetList,
+    component: SimpleTweetList,
     props: { isActive: true }
   },
   'likes': {
-    component: TweetList,
+    component: SimpleTweetList,
     props: { isActive: true, type: 'likes' }
   },
   'semantic-likes': {
-    component: SemanticLikesFilter,
+    component: SemanticTweetList,
     props: { isActive: true }
   },
   'bookmarks': {
-    component: TweetList,
+    component: SimpleTweetList,
     props: { isActive: true, type: 'bookmarks' }
   },
   'replies': {
@@ -66,7 +66,7 @@ const TAB_COMPONENTS: Record<string, TabConfig> = {
     props: { isActive: true }
   },
   'zero-engagement-tweets': {
-    component: TweetList,
+    component: SimpleTweetList,
     props: { isActive: true }
   }
 };
