@@ -15,6 +15,10 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import time
+from .config import (
+    SEMANTIC_MODEL_NAME, SEMANTIC_SIMILARITY_THRESHOLD, SEMANTIC_BATCH_SIZE,
+    CLASSIFICATIONS_DB_PATH, DATABASE_PATH, DEFAULT_TOPICS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +34,7 @@ class SemanticTweetClassifier:
     - Batch processing for efficiency
     """
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", similarity_threshold: float = 0.3):
+    def __init__(self, model_name: str = SEMANTIC_MODEL_NAME, similarity_threshold: float = SEMANTIC_SIMILARITY_THRESHOLD):
         """
         Initialize the semantic classifier.
         
@@ -45,8 +49,8 @@ class SemanticTweetClassifier:
         self.topic_definitions = self._get_default_topics()
         
         # Database paths
-        self.db_path = Path(__file__).parent.parent / 'data' / 'x_data.db'
-        self.classifications_db = Path(__file__).parent.parent / 'theme_classifications.db'
+        self.db_path = Path(__file__).parent.parent / DATABASE_PATH.lstrip('./')
+        self.classifications_db = Path(__file__).parent.parent / CLASSIFICATIONS_DB_PATH.lstrip('./')
         
     def _get_default_topics(self) -> Dict[str, List[str]]:
         """
@@ -56,29 +60,7 @@ class SemanticTweetClassifier:
         of the topic. The classifier will compute similarity to all phrases
         and use the maximum similarity score.
         """
-        return {
-            "technology": [
-                "artificial intelligence and machine learning",
-                "software development and programming",
-                "tech startups and innovation",
-                "coding and software engineering",
-                "AI tools and automation"
-            ],
-            "politics": [
-                "government policy and legislation",
-                "political campaigns and elections",
-                "democratic processes and voting",
-                "political parties and candidates",
-                "policy debates and governance"
-            ],
-            "miami": [
-                "Miami Florida city life",
-                "South Beach and Miami Beach",
-                "Miami nightlife and entertainment",
-                "Miami real estate and housing",
-                "Miami weather and beaches"
-            ]
-        }
+        return DEFAULT_TOPICS
     
     def load_model(self):
         """Load the sentence transformer model."""
@@ -127,7 +109,7 @@ class SemanticTweetClassifier:
         
         return topic_scores
     
-    def classify_tweets_batch(self, tweets: List[Dict], batch_size: int = 32) -> List[Dict]:
+    def classify_tweets_batch(self, tweets: List[Dict], batch_size: int = SEMANTIC_BATCH_SIZE) -> List[Dict]:
         """
         Classify multiple tweets efficiently using batch processing.
         
@@ -369,7 +351,8 @@ class SemanticTweetClassifier:
 
 def classify_all_tweets():
     """Utility function to classify all tweets in the database."""
-    classifier = SemanticTweetClassifier(similarity_threshold=0.25)
+    from .config import SEMANTIC_SIMILARITY_THRESHOLD_LOW
+    classifier = SemanticTweetClassifier(similarity_threshold=SEMANTIC_SIMILARITY_THRESHOLD_LOW)
     
     # Get tweets from database
     tweets = classifier.get_tweets_from_db()
@@ -380,7 +363,7 @@ def classify_all_tweets():
     
     # Classify tweets
     start_time = time.time()
-    classifications = classifier.classify_tweets_batch(tweets, batch_size=32)
+    classifications = classifier.classify_tweets_batch(tweets, batch_size=SEMANTIC_BATCH_SIZE)
     end_time = time.time()
     
     # Save results
@@ -400,7 +383,8 @@ def classify_all_tweets():
 
 def classify_all_likes():
     """Utility function to classify all likes in the database."""
-    classifier = SemanticTweetClassifier(similarity_threshold=0.25)
+    from .config import SEMANTIC_SIMILARITY_THRESHOLD_LOW
+    classifier = SemanticTweetClassifier(similarity_threshold=SEMANTIC_SIMILARITY_THRESHOLD_LOW)
     
     # Get likes from database
     likes = classifier.get_likes_from_db()
@@ -411,7 +395,7 @@ def classify_all_likes():
     
     # Classify likes
     start_time = time.time()
-    classifications = classifier.classify_tweets_batch(likes, batch_size=32)
+    classifications = classifier.classify_tweets_batch(likes, batch_size=SEMANTIC_BATCH_SIZE)
     end_time = time.time()
     
     # Save results

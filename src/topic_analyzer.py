@@ -16,6 +16,10 @@ from enum import Enum
 from datetime import datetime
 
 from .semantic_classifier import SemanticTweetClassifier
+from .config import (
+    TOPIC_MIN_SCORE, TOPIC_MAX_RESULTS, TOPIC_BATCH_SIZE,
+    DATABASE_PATH, CLASSIFICATIONS_DB_PATH, SEMANTIC_SIMILARITY_THRESHOLD
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +35,8 @@ class DataSource(Enum):
 class TopicFilter:
     """Configuration for topic-based filtering."""
     topics: List[str]  # Topics to include (empty = all topics)
-    min_score: float = 0.3  # Minimum similarity score
-    max_results: int = 100  # Maximum results to return
+    min_score: float = TOPIC_MIN_SCORE  # Minimum similarity score
+    max_results: int = TOPIC_MAX_RESULTS  # Maximum results to return
     sort_by: str = "score"  # "score", "date", "relevance"
     exclude_topics: List[str] = None  # Topics to exclude
     
@@ -67,11 +71,11 @@ class TopicAnalyzer:
     - Export capabilities for analysis
     """
     
-    def __init__(self, similarity_threshold: float = 0.3):
+    def __init__(self, similarity_threshold: float = SEMANTIC_SIMILARITY_THRESHOLD):
         """Initialize the topic analyzer."""
         self.classifier = SemanticTweetClassifier(similarity_threshold=similarity_threshold)
-        self.db_path = Path(__file__).parent.parent / 'data' / 'x_data.db'
-        self.classifications_db = Path(__file__).parent.parent / 'theme_classifications.db'
+        self.db_path = Path(__file__).parent.parent / DATABASE_PATH.lstrip('./')
+        self.classifications_db = Path(__file__).parent.parent / CLASSIFICATIONS_DB_PATH.lstrip('./')
         
     def add_custom_topic(self, topic_name: str, seed_phrases: List[str]) -> None:
         """Add a custom topic definition."""
@@ -425,7 +429,7 @@ class TopicAnalyzer:
             return results
 
 # Convenience functions for common use cases
-def analyze_tweets_by_topic(topic: str, min_score: float = 0.3, limit: int = 50) -> List[Dict]:
+def analyze_tweets_by_topic(topic: str, min_score: float = TOPIC_MIN_SCORE, limit: int = TOPIC_BATCH_SIZE) -> List[Dict]:
     """Quick function to analyze tweets by specific topic."""
     analyzer = TopicAnalyzer()
     topic_filter = TopicFilter(
@@ -435,7 +439,7 @@ def analyze_tweets_by_topic(topic: str, min_score: float = 0.3, limit: int = 50)
     )
     return analyzer.filter_by_topics(DataSource.TWEETS, topic_filter)
 
-def analyze_likes_by_topic(topic: str, min_score: float = 0.3, limit: int = 50) -> List[Dict]:
+def analyze_likes_by_topic(topic: str, min_score: float = TOPIC_MIN_SCORE, limit: int = TOPIC_BATCH_SIZE) -> List[Dict]:
     """Quick function to analyze likes by specific topic."""
     analyzer = TopicAnalyzer()
     topic_filter = TopicFilter(

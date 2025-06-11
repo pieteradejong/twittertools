@@ -1,4 +1,4 @@
-interface LoadingStateProps {
+  interface LoadingStateProps {
   message?: string;
 }
 

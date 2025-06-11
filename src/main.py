@@ -18,6 +18,12 @@ from rich.console import Console
 from rich.table import Table
 from src.settings import get_settings
 from src.cache import TwitterCache, AuthCache
+from src.config import (
+    CORS_ORIGINS, MIN_TWEETS_FOR_TEST, DEFAULT_LIKES_LIMIT, 
+    USER_PROFILE_BATCH_SIZE, API_CALL_PAUSE_SECONDS, TOPIC_MIN_SCORE,
+    MAX_TWEETS_PER_REQUEST, MAX_LIKES_PER_REQUEST,
+    LIST_ENRICHMENT_DEFAULT_DELAY, LIST_ENRICHMENT_MIN_DELAY, LIST_ENRICHMENT_MAX_DELAY
+)
 import time
 import sqlite3
 import json
@@ -41,16 +47,7 @@ app = FastAPI(
 settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.FRONTEND_URL,  # Default: http://localhost:5173
-        "http://localhost:5175",  # Alternative Vite port
-        "http://localhost:5176",  # Another Vite port
-        "http://localhost:3000",  # Common React dev port
-        "http://127.0.0.1:5173",  # IPv4 localhost variants
-        "http://127.0.0.1:5175",
-        "http://127.0.0.1:5176",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=[settings.FRONTEND_URL] + CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1086,7 +1083,7 @@ async def test_authentication(
             try:
                 tweets = service.client.get_users_tweets(
                     me['data']['id'],
-                    max_results=5,  # Minimum valid value
+                    max_results=MIN_TWEETS_FOR_TEST,  # Minimum valid value
                     tweet_fields=['created_at', 'public_metrics', 'text']
                 )
                 auth_steps.append("Data fetching test successful")
@@ -1317,6 +1314,158 @@ async def get_followers(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# List Members API Endpoints
+@app.get("/api/lists")
+async def get_lists(service: LocalTwitterService = Depends(get_local_twitter_service)):
+    """Get all stored Twitter lists."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, name, description, member_count, follower_count, 
+                       private, owner_id, created_at, fetched_at, last_updated
+                FROM twitter_lists 
+                ORDER BY name
+            """)
+            
+            lists = []
+            for row in cursor.fetchall():
+                lists.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "member_count": row[3],
+                    "follower_count": row[4],
+                    "private": bool(row[5]),
+                    "owner_id": row[6],
+                    "created_at": row[7],
+                    "fetched_at": row[8],
+                    "last_updated": row[9]
+                })
+            
+            return {
+                "lists": lists,
+                "total_count": len(lists)
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/lists/{list_id}")
+async def get_list_info(
+    list_id: str,
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Get information about a specific Twitter list."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, name, description, member_count, follower_count, 
+                       private, owner_id, created_at, fetched_at, last_updated
+                FROM twitter_lists 
+                WHERE id = ?
+            """, (list_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="List not found")
+            
+            return {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "member_count": row[3],
+                "follower_count": row[4],
+                "private": bool(row[5]),
+                "owner_id": row[6],
+                "created_at": row[7],
+                "fetched_at": row[8],
+                "last_updated": row[9]
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/lists/{list_id}/members")
+async def get_list_members(
+    list_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Get members of a specific Twitter list."""
+    try:
+        with sqlite3.connect(service.db_path) as conn:
+            # Check if list exists
+            cursor = conn.execute("SELECT name FROM twitter_lists WHERE id = ?", (list_id,))
+            list_row = cursor.fetchone()
+            if not list_row:
+                raise HTTPException(status_code=404, detail="List not found")
+            
+            list_name = list_row[0]
+            
+            # Get members with pagination
+            cursor = conn.execute("""
+                SELECT user_id, username, name, description, profile_image_url,
+                       verified, protected, follower_count, following_count, tweet_count,
+                       created_at, location, url, fetched_at
+                FROM list_members 
+                WHERE list_id = ?
+                ORDER BY name
+                LIMIT ? OFFSET ?
+            """, (list_id, limit, offset))
+            
+            # Get total count
+            cursor_count = conn.execute("""
+                SELECT COUNT(*) FROM list_members WHERE list_id = ?
+            """, (list_id,))
+            total_count = cursor_count.fetchone()[0]
+            
+            members = []
+            for row in cursor.fetchall():
+                members.append({
+                    "id": row[0],
+                    "username": row[1],
+                    "display_name": row[2] or f"Twitter User {row[0][-8:]}",
+                    "description": row[3],
+                    "profile_image_url": row[4],
+                    "verified": bool(row[5]) if row[5] is not None else False,
+                    "protected": bool(row[6]) if row[6] is not None else False,
+                    "follower_count": row[7],
+                    "following_count": row[8],
+                    "tweet_count": row[9],
+                    "created_at": row[10],
+                    "location": row[11],
+                    "url": row[12],
+                    "fetched_at": row[13],
+                    "needs_profile_data": row[1] is None  # Indicate if profile needs enriching
+                })
+            
+            return {
+                "list_id": list_id,
+                "list_name": list_name,
+                "members": members,
+                "total_count": total_count,
+                "limit": limit,
+                "offset": offset
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/lists/{list_id}/fetch")
+async def fetch_list_members(
+    list_id: str,
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Fetch list members from X API and store in database."""
+    try:
+        # This would require the ListMembersFetcher to be integrated
+        # For now, return a placeholder response
+        return {
+            "message": f"List member fetching for {list_id} would be implemented here",
+            "status": "not_implemented",
+            "note": "Requires X API Bearer Token configuration"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/tweet/delete")
 async def delete_tweet(
     tweet_id: str = Body(..., embed=True),
@@ -1366,7 +1515,7 @@ async def get_likes_by_topic(
     topic: str,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    min_score: float = Query(0.3, ge=0.0, le=1.0)
+    min_score: float = Query(TOPIC_MIN_SCORE, ge=0.0, le=1.0)
 ):
     """Get likes filtered by semantic topic."""
     try:
@@ -1502,7 +1651,7 @@ async def filter_by_topics(
     data_source: str = Body(..., description="Data source to filter"),
     topics: List[str] = Body([], description="Topics to include (empty = all)"),
     exclude_topics: List[str] = Body([], description="Topics to exclude"),
-    min_score: float = Body(0.3, ge=0.0, le=1.0, description="Minimum similarity score"),
+    min_score: float = Body(TOPIC_MIN_SCORE, ge=0.0, le=1.0, description="Minimum similarity score"),
     max_results: int = Body(100, ge=1, le=1000, description="Maximum results"),
     sort_by: str = Body("score", description="Sort criteria: score, date, relevance")
 ):
@@ -1779,51 +1928,7 @@ async def get_direct_messages(
         logger.error(f"Error fetching direct messages: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/lists")
-async def get_lists(
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    service: LocalTwitterService = Depends(get_local_twitter_service)
-):
-    """Get Twitter lists with enriched metadata."""
-    try:
-        with sqlite3.connect(service.db_path) as conn:
-            # Join with list metadata cache to get member counts
-            cursor = conn.execute("""
-                SELECT 
-                    l.id, 
-                    l.name, 
-                    l.url, 
-                    l.type,
-                    lmc.member_count,
-                    lmc.follower_count,
-                    lmc.description,
-                    lmc.private
-                FROM lists l
-                LEFT JOIN list_metadata_cache lmc ON l.id = lmc.list_id 
-                    AND lmc.expires_at > datetime('now')
-                ORDER BY l.name IS NULL, l.name, l.id
-                LIMIT ? OFFSET ?
-            """, (limit, offset))
-            
-            lists = []
-            for row in cursor.fetchall():
-                list_data = {
-                    "id": row[0],
-                    "name": row[1],
-                    "url": row[2],
-                    "type": row[3],
-                    "member_count": row[4],
-                    "follower_count": row[5],
-                    "description": row[6],
-                    "private": bool(row[7]) if row[7] is not None else None
-                }
-                lists.append(list_data)
-            
-            return lists
-    except Exception as e:
-        logger.error(f"Error fetching lists: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/lists/enrichment/stats")
 async def get_list_enrichment_stats(service: LocalTwitterService = Depends(get_local_twitter_service)):
@@ -1842,7 +1947,7 @@ async def get_list_enrichment_stats(service: LocalTwitterService = Depends(get_l
 @app.post("/api/lists/enrichment/run")
 async def run_list_enrichment(
     limit: int = Query(10, ge=1, le=50, description="Number of lists to enrich"),
-    delay: float = Query(1.0, ge=0.5, le=5.0, description="Delay between API requests in seconds"),
+    delay: float = Query(LIST_ENRICHMENT_DEFAULT_DELAY, ge=LIST_ENRICHMENT_MIN_DELAY, le=LIST_ENRICHMENT_MAX_DELAY, description="Delay between API requests in seconds"),
     service: LocalTwitterService = Depends(get_local_twitter_service)
 ):
     """Run list enrichment to fetch member counts from Twitter API."""
@@ -2261,7 +2366,7 @@ async def enrich_user_profiles(
             failed_count = 0
             
             # Fetch users in batches (Twitter API allows up to 100 users per request)
-            batch_size = 100
+            batch_size = USER_PROFILE_BATCH_SIZE
             for i in range(0, len(user_ids), batch_size):
                 batch_ids = user_ids[i:i + batch_size]
                 
@@ -2317,7 +2422,7 @@ async def enrich_user_profiles(
                         
                     # Rate limiting: sleep between batches
                     import time
-                    time.sleep(1)
+                    time.sleep(API_CALL_PAUSE_SECONDS)
                     
                 except tweepy.TooManyRequests:
                     return {
@@ -2387,24 +2492,67 @@ async def get_profile_stats(service: LocalTwitterService = Depends(get_local_twi
 
 
 # CLI functionality
+
 def main():
     """CLI entry point."""
-    parser = argparse.ArgumentParser(description='Twitter Tools CLI')
-    parser.add_argument(
+    parser = argparse.ArgumentParser(description='Twitter Tools - Data Analysis and Management')
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Configuration management commands
+    config_parser = subparsers.add_parser('config', help='Configuration management commands')
+    config_subparsers = config_parser.add_subparsers(dest='config_command', help='Configuration commands')
+    
+    # Show config command
+    show_config_parser = config_subparsers.add_parser('show', help='Show current configuration')
+    show_config_parser.add_argument('--format', choices=['json', 'table'], default='table',
+                                    help='Output format')
+    
+    # Validate config command
+    validate_config_parser = config_subparsers.add_parser('validate', help='Validate configuration')
+    
+    # List presets command
+    presets_parser = config_subparsers.add_parser('presets', help='List available configuration presets')
+    
+    # Apply preset command
+    apply_preset_parser = config_subparsers.add_parser('apply-preset', help='Apply a configuration preset')
+    apply_preset_parser.add_argument('preset_name', help='Name of the preset to apply')
+    
+    # Save config command
+    save_config_parser = config_subparsers.add_parser('save', help='Save current configuration to file')
+    save_config_parser.add_argument('--file', help='File path to save configuration')
+    
+    # Load config command
+    load_config_parser = config_subparsers.add_parser('load', help='Load configuration from file')
+    load_config_parser.add_argument('file', help='File path to load configuration from')
+    
+    # Simple data command for backward compatibility
+    data_parser = subparsers.add_parser('likes', help='Show recent likes')
+    data_parser.add_argument(
         '-n', '--number',
         type=int,
         default=10,
         help='Number of recent likes to fetch (default: 10)'
     )
+    
     args = parser.parse_args()
     
-    try:
-        service = TwitterService()
-        likes = service.get_recent_likes(count=args.number)
-        service.display_likes(likes)
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        raise SystemExit(1)
+    if args.command == 'config':
+        handle_config_commands(args)
+    elif args.command == 'likes':
+        try:
+            service = TwitterService()
+            likes = service.get_recent_likes(count=args.number)
+            # service.display_likes(likes)  # Commented out as this method may not exist
+            console = Console()
+            console.print(f"Found {len(likes)} recent likes")
+            for like in likes[:args.number]:
+                console.print(f"• {like.get('text', 'No text')[:100]}...")
+        except Exception as e:
+            logger.error(f"Error: {str(e)}")
+            raise SystemExit(1)
+    else:
+        # Show help if no command specified
+        parser.print_help()
 
 if __name__ == "__main__":
     main() 

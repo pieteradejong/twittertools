@@ -7,6 +7,7 @@ import { FollowersList } from "../users/FollowersList";
 import { UserList } from "../users/UserList";
 import { DirectMessageList } from "../communication/DirectMessageList";
 import { ListsList } from "../users/ListsList";
+import { ListMembersDemo } from "../lists/ListMembersDemo";
 import { ProfileEnrichment, ProfileInfo } from "../profile";
 import type { ComponentType } from "react";
 
@@ -81,6 +82,10 @@ const TAB_COMPONENTS: Record<string, TabConfig> = {
   'lists': {
     component: ListsList,
     props: { isActive: true }
+  },
+  'list-members-demo': {
+    component: ListMembersDemo,
+    props: {}
   },
   'zero-engagement-tweets': {
     component: SimpleTweetList,

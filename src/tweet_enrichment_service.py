@@ -7,15 +7,16 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import json
 import os
+from .config import API_CALL_PAUSE_SECONDS, DATABASE_PATH, TWEET_ENRICHMENT_CACHE_TTL_DAYS
 
 logger = logging.getLogger(__name__)
 
 class TweetEnrichmentService:
     """Service to enrich tweets with author information from Twitter API."""
     
-    def __init__(self, db_path: str = "data/x_data.db"):
+    def __init__(self, db_path: str = DATABASE_PATH):
         self.db_path = Path(db_path)
-        self.cache_ttl_days = 30  # Cache tweet data for 30 days
+        self.cache_ttl_days = TWEET_ENRICHMENT_CACHE_TTL_DAYS  # Cache tweet data for configured days
         self._init_tweet_cache_table()
         self._init_twitter_client()
     
@@ -253,7 +254,7 @@ class TweetEnrichmentService:
             # Rate limiting: pause between API calls
             if self.client and tweet_details and tweet_details.get('source') == 'api':
                 if (i + 1) % 10 == 0:  # Pause every 10 API calls
-                    time.sleep(1)
+                    time.sleep(API_CALL_PAUSE_SECONDS)
         
         return enriched_likes
     

@@ -6,15 +6,19 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime, timedelta
 import json
+from .config import (
+    LIST_ENRICHMENT_DEFAULT_DELAY, LIST_ENRICHMENT_CACHE_TTL_DAYS,
+    DATABASE_PATH
+)
 
 logger = logging.getLogger(__name__)
 
 class ListEnrichmentService:
     """Service to enrich lists with metadata from Twitter API."""
     
-    def __init__(self, db_path: str = "data/x_data.db"):
+    def __init__(self, db_path: str = DATABASE_PATH):
         self.db_path = Path(db_path)
-        self.cache_ttl_days = 7  # Cache list metadata for 7 days
+        self.cache_ttl_days = LIST_ENRICHMENT_CACHE_TTL_DAYS  # Cache list metadata for configured days
         self._init_list_metadata_table()
         self._init_twitter_client()
     
@@ -152,7 +156,7 @@ class ListEnrichmentService:
         # Fetch from API if not cached
         return self.fetch_list_metadata_from_api(list_id)
     
-    def enrich_lists_batch(self, list_ids: List[str], delay: float = 1.0) -> Dict[str, Any]:
+    def enrich_lists_batch(self, list_ids: List[str], delay: float = LIST_ENRICHMENT_DEFAULT_DELAY) -> Dict[str, Any]:
         """Enrich multiple lists with metadata."""
         enriched_count = 0
         failed_count = 0
