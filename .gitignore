@@ -236,3 +236,26 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# --- added 2026-09-01 (workspace audit): baseline patterns that were missing ---
+.DS_Store
+**/.DS_Store
+node_modules/
+**/node_modules/
+
+# Local X/Twitter archive exports + screenshots — never commit (public repo,
+# these trees contain direct-messages.js, ip-audit.js, account-creation-ip.js,
+# phone-number.js). Consolidated 2026-09-06, see ARCHIVE_CONSOLIDATION_2026-09-06.md
+/archives/
+
+# --- added 2026-10-19: project records stay local ---
+# They hold personal facts about the archive owner and this repo is public, so
+# only code is committed. Backed up via ~/docs/.backup/dev-includes.txt.
+/CHANGELOG.md
+/DECISIONS.md
+/PROGRESS.md
+/ROADMAP.md
+/DOCUMENTATION.md
+/ARCHIVE_*.md
+/CLAUDE.md
+/TODO.md
