@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     STORE_PERSONAL_DATA: bool = True
     ANONYMIZE_USERNAMES: bool = False
     GDPR_COMPLIANCE_MODE: bool = False
+
+    # Archive owner, shown when the local data has no profile row (set in .env)
+    LOCAL_USERNAME: str = "me"
+    LOCAL_DISPLAY_NAME: str = "Me"
     
     # ==================== Performance & Monitoring ====================
     # Performance Settings

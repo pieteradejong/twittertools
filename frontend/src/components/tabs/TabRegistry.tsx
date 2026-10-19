@@ -1,5 +1,6 @@
 import { SimpleTweetList } from "../tweets/SimpleTweetList";
 import { SemanticTweetList } from "../tweets/SemanticTweetList";
+import { LikesReview } from "../tweets/LikesReview";
 import { TopicAnalysisView } from "../tweets/TopicAnalysisView";
 import { ReplyList } from "../communication/ReplyList";
 import { FollowingList } from "../users/FollowingList";
@@ -8,6 +9,7 @@ import { UserList } from "../users/UserList";
 import { DirectMessageList } from "../communication/DirectMessageList";
 import { ListsList } from "../users/ListsList";
 import { ListMembersDemo } from "../lists/ListMembersDemo";
+import { AccountClassifier } from "../users/AccountClassifier";
 import { ProfileEnrichment, ProfileInfo } from "../profile";
 import type { ComponentType } from "react";
 
@@ -26,6 +28,10 @@ const TAB_COMPONENTS: Record<string, TabConfig> = {
   'likes': {
     component: SimpleTweetList,
     props: { isActive: true, type: 'likes' }
+  },
+  'likes-review': {
+    component: LikesReview,
+    props: { isActive: true }
   },
   'semantic-likes': {
     component: SemanticTweetList,
@@ -90,6 +96,10 @@ const TAB_COMPONENTS: Record<string, TabConfig> = {
   'zero-engagement-tweets': {
     component: SimpleTweetList,
     props: { isActive: true }
+  },
+  'account-classifier': {
+    component: AccountClassifier,
+    props: { isActive: true }
   }
 };
 
@@ -97,6 +107,7 @@ const TAB_COMPONENTS: Record<string, TabConfig> = {
 const TAB_DISPLAY_NAMES: Record<string, string> = {
   tweets: "Tweets",
   likes: "Likes", 
+  "likes-review": "Likes Review",
   bookmarks: "Bookmarks",
   replies: "Replies",
   lists: "Lists",

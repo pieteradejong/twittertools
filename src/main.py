@@ -53,6 +53,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Likes Review (archive likes enriched by scripts/enrich_likes.py)
+from src.likes_review import router as likes_review_router  # noqa: E402
+app.include_router(likes_review_router)
+
 # Pydantic models for API
 class Author(BaseModel):
     id: Optional[str] = None
@@ -439,8 +443,8 @@ class LocalTwitterService:
                     else:
                         user_info = {
                             'id': author_id,
-                            'username': 'pietertypes',
-                            'display_name': 'Pieter',
+                            'username': settings.LOCAL_USERNAME,
+                            'display_name': settings.LOCAL_DISPLAY_NAME,
                             'avatar_url': None,
                             'verified': False
                         }
@@ -509,8 +513,8 @@ class LocalTwitterService:
                     else:
                         user_info = {
                             'id': author_id,
-                            'username': 'pietertypes',
-                            'display_name': 'Pieter',
+                            'username': settings.LOCAL_USERNAME,
+                            'display_name': settings.LOCAL_DISPLAY_NAME,
                             'avatar_url': None,
                             'verified': False
                         }
@@ -631,8 +635,8 @@ class TwitterService:
             else:
                 user_info = {
                     'id': user_id,
-                    'username': 'pietertypes',
-                    'display_name': 'Pieter',
+                    'username': settings.LOCAL_USERNAME,
+                    'display_name': settings.LOCAL_DISPLAY_NAME,
                     'avatar_url': None,
                     'verified': False
                 }
@@ -908,8 +912,8 @@ async def get_profile(service: LocalTwitterService = Depends(get_local_twitter_s
                     user_id = tweet_author[0]
                 else:
                     user_id = "unknown"
-                username = "pietertypes"
-                display_name = "Pieter"
+                username = settings.LOCAL_USERNAME
+                display_name = settings.LOCAL_DISPLAY_NAME
                 created_at = "2024-01-01"
             # Fetch avatar_url and other profile info
             cursor = conn.execute("SELECT avatar_url, header_url, bio, website, location FROM profile WHERE account_id = ? LIMIT 1", (user_id,))
@@ -1367,30 +1371,67 @@ async def get_lists(service: LocalTwitterService = Depends(get_local_twitter_ser
     """Get all stored Twitter lists."""
     try:
         with sqlite3.connect(service.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            
+            # Get lists from both tables
+            lists = []
+            
+            # First, try to get lists from twitter_lists table (created by test script)
+            try:
+                cursor = conn.execute("""
+                    SELECT id, name, description, member_count, follower_count, 
+                           private, owner_id, created_at, fetched_at, last_updated
+                    FROM twitter_lists 
+                    ORDER BY name
+                """)
+                
+                for row in cursor.fetchall():
+                    lists.append({
+                        "id": row["id"],
+                        "name": row["name"],
+                        "url": None,  # Not available in twitter_lists schema
+                        "type": "sample",  # Mark as sample data
+                        "description": row["description"],
+                        "member_count": row["member_count"],
+                        "follower_count": row["follower_count"],
+                        "private": bool(row["private"]) if row["private"] is not None else None,
+                        "owner_id": row["owner_id"],
+                        "created_at": row["created_at"],
+                        "fetched_at": row["fetched_at"],
+                        "last_updated": row["last_updated"]
+                    })
+                    
+            except sqlite3.OperationalError as e:
+                # twitter_lists table doesn't exist, skip it
+                if "no such table: twitter_lists" in str(e):
+                    logger.debug("twitter_lists table not found, skipping")
+                else:
+                    raise e
+            
+            # Then, get lists from original lists table
             cursor = conn.execute("""
                 SELECT id, name, url, type
                 FROM lists 
                 ORDER BY name
             """)
             
-            lists = []
             for row in cursor.fetchall():
                 # Extract list name from URL if name is empty
-                list_name = row[1] or extract_list_name_from_url(row[2], row[0])
+                list_name = row["name"] or extract_list_name_from_url(row["url"], row["id"])
                 
                 lists.append({
-                    "id": row[0],
+                    "id": row["id"],
                     "name": list_name,
-                    "url": row[2],
-                    "type": row[3],
-                    "description": None,  # Not available in current schema
-                    "member_count": None,  # Not available in current schema
-                    "follower_count": None,  # Not available in current schema
-                    "private": None,  # Not available in current schema
-                    "owner_id": None,  # Not available in current schema
-                    "created_at": None,  # Not available in current schema
-                    "fetched_at": None,  # Not available in current schema
-                    "last_updated": None  # Not available in current schema
+                    "url": row["url"],
+                    "type": row["type"],
+                    "description": None,  # Not available in original schema
+                    "member_count": None,  # Not available in original schema
+                    "follower_count": None,  # Not available in original schema
+                    "private": None,  # Not available in original schema
+                    "owner_id": None,  # Not available in original schema
+                    "created_at": None,  # Not available in original schema
+                    "fetched_at": None,  # Not available in original schema
+                    "last_updated": None  # Not available in original schema
                 })
             
             return {
@@ -1448,26 +1489,73 @@ async def get_list_members(
     """Get members of a specific Twitter list."""
     try:
         with sqlite3.connect(service.db_path) as conn:
-            # Check if list exists
-            cursor = conn.execute("SELECT name, url FROM lists WHERE id = ?", (list_id,))
-            list_row = cursor.fetchone()
+            conn.row_factory = sqlite3.Row
+            
+            # Check if list exists in twitter_lists table (created by test script)
+            list_row = None
+            try:
+                cursor = conn.execute("SELECT name, description FROM twitter_lists WHERE id = ?", (list_id,))
+                list_row = cursor.fetchone()
+            except sqlite3.OperationalError as e:
+                # twitter_lists table doesn't exist, skip it
+                if "no such table: twitter_lists" not in str(e):
+                    raise e
+            
+            # If not found in twitter_lists, check the original lists table
             if not list_row:
-                raise HTTPException(status_code=404, detail="List not found")
+                cursor = conn.execute("SELECT name, url FROM lists WHERE id = ?", (list_id,))
+                original_list_row = cursor.fetchone()
+                if not original_list_row:
+                    raise HTTPException(status_code=404, detail="List not found")
+                list_name = original_list_row[0] or extract_list_name_from_url(original_list_row[1], list_id)
+                list_url = original_list_row[1]
+            else:
+                list_name = list_row[0]
+                list_url = None
             
-            list_name = list_row[0] or extract_list_name_from_url(list_row[1], list_id)
+            # Get list members from list_members table
+            cursor = conn.execute("""
+                SELECT user_id, username, name, description, profile_image_url, 
+                       verified, protected, follower_count, following_count, 
+                       tweet_count, created_at, location, url, fetched_at
+                FROM list_members 
+                WHERE list_id = ?
+                ORDER BY name
+                LIMIT ? OFFSET ?
+            """, (list_id, limit, offset))
             
-            # Note: List member data is not available in the current database schema
-            # The list_members table doesn't exist in the current archive format
+            members = []
+            for row in cursor.fetchall():
+                members.append({
+                    "id": row["user_id"],
+                    "username": row["username"],
+                    "display_name": row["name"],
+                    "description": row["description"],
+                    "profile_image_url": row["profile_image_url"],
+                    "verified": bool(row["verified"]),
+                    "protected": bool(row["protected"]),
+                    "follower_count": row["follower_count"],
+                    "following_count": row["following_count"],
+                    "tweet_count": row["tweet_count"],
+                    "created_at": row["created_at"],
+                    "location": row["location"],
+                    "url": row["url"],
+                    "fetched_at": row["fetched_at"],
+                    "needs_profile_data": False
+                })
+            
+            # Get total count
+            cursor = conn.execute("SELECT COUNT(*) FROM list_members WHERE list_id = ?", (list_id,))
+            total_count = cursor.fetchone()[0]
             
             return {
                 "list_id": list_id,
                 "list_name": list_name,
-                "list_url": list_row[1],
-                "members": [],  # No member data available in current schema
-                "total_count": 0,
+                "list_url": list_url,
+                "members": members,
+                "total_count": total_count,
                 "limit": limit,
-                "offset": offset,
-                "note": "List member data is not available in the current database schema. Use the fetch endpoint to retrieve members via API."
+                "offset": offset
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2512,6 +2600,217 @@ async def get_profile_stats(service: LocalTwitterService = Depends(get_local_twi
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+# Account Classification Endpoints
+@app.post("/api/accounts/classify")
+async def classify_following_accounts(
+    method: str = Body("hybrid", description="Classification method: content, profile, engagement, hybrid"),
+    limit: int = Body(None, description="Maximum number of accounts to classify (None = all)"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Classify accounts you're following using various methods."""
+    try:
+        from .account_classifier import AccountClassifier, ClassificationMethod
+        
+        # Validate method
+        try:
+            classification_method = ClassificationMethod(method)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid method. Must be one of: {[m.value for m in ClassificationMethod]}"
+            )
+        
+        classifier = AccountClassifier()
+        classifications = classifier.classify_all_following(classification_method, limit)
+        
+        # Convert to JSON-serializable format
+        results = []
+        for classification in classifications:
+            results.append({
+                "user_id": classification.user_id,
+                "username": classification.username,
+                "display_name": classification.display_name,
+                "primary_topics": classification.primary_topics,
+                "topic_scores": classification.topic_scores,
+                "profile_category": classification.profile_category,
+                "engagement_score": classification.engagement_score,
+                "suggested_lists": classification.suggested_lists,
+                "confidence_score": classification.confidence_score,
+                "classification_reasons": classification.classification_reasons
+            })
+        
+        return {
+            "classifications": results,
+            "total_classified": len(results),
+            "method_used": method,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error classifying accounts: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/accounts/suggest-lists")
+async def suggest_account_lists(
+    method: str = Body("hybrid", description="Classification method to use"),
+    min_members_per_list: int = Body(3, ge=1, le=20, description="Minimum accounts per list"),
+    max_lists: int = Body(15, ge=1, le=50, description="Maximum number of lists to suggest"),
+    limit: int = Body(None, description="Maximum accounts to analyze (None = all)"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Generate list suggestions based on account classifications."""
+    try:
+        from .account_classifier import AccountClassifier, ClassificationMethod
+        
+        # Validate method
+        try:
+            classification_method = ClassificationMethod(method)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid method. Must be one of: {[m.value for m in ClassificationMethod]}"
+            )
+        
+        classifier = AccountClassifier()
+        
+        # First classify accounts
+        classifications = classifier.classify_all_following(classification_method, limit)
+        
+        # Then generate list suggestions
+        suggestions = classifier.suggest_lists(classifications, min_members_per_list, max_lists)
+        
+        # Convert to JSON-serializable format
+        results = []
+        for suggestion in suggestions:
+            results.append({
+                "list_name": suggestion.list_name,
+                "description": suggestion.description,
+                "category": suggestion.category,
+                "confidence_score": suggestion.confidence_score,
+                "creation_reason": suggestion.creation_reason,
+                "member_count": len(suggestion.members),
+                "members": suggestion.members
+            })
+        
+        return {
+            "suggestions": results,
+            "total_suggestions": len(results),
+            "total_accounts_analyzed": len(classifications),
+            "method_used": method,
+            "parameters": {
+                "min_members_per_list": min_members_per_list,
+                "max_lists": max_lists
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating list suggestions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/accounts/classify/{user_id}")
+async def classify_single_account(
+    user_id: str,
+    method: str = Query("hybrid", description="Classification method"),
+    service: LocalTwitterService = Depends(get_local_twitter_service)
+):
+    """Classify a single account."""
+    try:
+        from .account_classifier import AccountClassifier, ClassificationMethod
+        
+        # Validate method
+        try:
+            classification_method = ClassificationMethod(method)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid method. Must be one of: {[m.value for m in ClassificationMethod]}"
+            )
+        
+        classifier = AccountClassifier()
+        classification = classifier.classify_account(user_id, classification_method)
+        
+        return {
+            "user_id": classification.user_id,
+            "username": classification.username,
+            "display_name": classification.display_name,
+            "primary_topics": classification.primary_topics,
+            "topic_scores": classification.topic_scores,
+            "profile_category": classification.profile_category,
+            "engagement_score": classification.engagement_score,
+            "suggested_lists": classification.suggested_lists,
+            "confidence_score": classification.confidence_score,
+            "classification_reasons": classification.classification_reasons,
+            "method_used": method,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error classifying account {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/accounts/classification-methods")
+async def get_classification_methods():
+    """Get available classification methods and their descriptions."""
+    from .account_classifier import ClassificationMethod
+    
+    methods = {
+        "content": {
+            "name": "Content-Based",
+            "description": "Classify based on semantic analysis of account's content/tweets",
+            "pros": ["Accurate topic identification", "Works with existing semantic classifier"],
+            "cons": ["Requires content data", "May be limited by available tweets"]
+        },
+        "profile": {
+            "name": "Profile-Based", 
+            "description": "Classify based on bio, location, and profile metadata",
+            "pros": ["Fast classification", "Works without content", "Good for professional categories"],
+            "cons": ["Limited by bio quality", "May miss nuanced interests"]
+        },
+        "engagement": {
+            "name": "Engagement-Based",
+            "description": "Classify based on your interaction patterns with the account",
+            "pros": ["Personalized to your interests", "Reflects actual engagement"],
+            "cons": ["Requires interaction history", "Not yet fully implemented"]
+        },
+        "hybrid": {
+            "name": "Hybrid Approach",
+            "description": "Combines content, profile, and engagement signals for comprehensive classification",
+            "pros": ["Most accurate", "Robust classification", "Multiple confidence signals"],
+            "cons": ["Slower processing", "Requires multiple data sources"]
+        }
+    }
+    
+    return {
+        "methods": methods,
+        "default_method": "hybrid",
+        "available_methods": [method.value for method in ClassificationMethod]
+    }
+
+@app.get("/api/accounts/profile-categories")
+async def get_profile_categories():
+    """Get available profile categories and their patterns."""
+    from .account_classifier import AccountClassifier
+    
+    classifier = AccountClassifier()
+    patterns = classifier.profile_patterns
+    
+    categories = {}
+    for category, pattern_list in patterns.items():
+        categories[category] = {
+            "display_name": classifier._format_profile_category(category),
+            "patterns": pattern_list,
+            "pattern_count": len(pattern_list)
+        }
+    
+    return {
+        "categories": categories,
+        "total_categories": len(categories)
+    }
 
 
 # CLI functionality
