@@ -1,4 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# run.sh — start the backend (uvicorn, :8000) and the frontend (Vite, :5173) together.
+#
+#   ./run.sh                both servers; Ctrl+C stops them
+#   ./run.sh test [args]    ./test.sh (unit tests by default; see ./test.sh --help)
+#   ./run.sh help           this message
+cd "$(dirname "$0")" || exit 1
+case "${1:-}" in
+    -h|--help|help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    test) shift; exec ./test.sh "$@" ;;
+    '') ;;
+    *) echo "unknown command: $1 (see ./run.sh help)" >&2; exit 2 ;;
+esac
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -33,6 +45,15 @@ check_service() {
     return 1
 }
 
+# Function to check if virtual environment is active
+check_venv_active() {
+    if [ -n "$VIRTUAL_ENV" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 # Function to stop services
 stop_services() {
     echo -e "\n${GREEN}Stopping services...${NC}"
@@ -51,7 +72,7 @@ stop_services() {
 trap stop_services SIGINT SIGTERM
 
 # Check if init.sh has been run
-if [ ! -d "env" ] || [ ! -d "frontend" ]; then
+if [ ! -d "venv" ] || [ ! -d "frontend" ]; then
     echo -e "${YELLOW}First-time setup required. Running init.sh...${NC}"
     if [ ! -f "init.sh" ]; then
         echo -e "${RED}Error: init.sh not found${NC}"
@@ -82,8 +103,27 @@ for port in 8000 5173; do
     fi
 done
 
-# Activate virtual environment
-source env/bin/activate
+# Check and activate virtual environment
+if check_venv_active; then
+    echo -e "${GREEN}Virtual environment is already active: $VIRTUAL_ENV${NC}"
+else
+    echo -e "${YELLOW}Activating virtual environment...${NC}"
+    if [ ! -f "venv/bin/activate" ]; then
+        echo -e "${RED}Error: Virtual environment not found at venv/bin/activate${NC}"
+        echo -e "${YELLOW}Please run init.sh first to set up the virtual environment${NC}"
+        exit 1
+    fi
+    # shellcheck disable=SC1091
+    source venv/bin/activate
+    
+    # Verify activation was successful
+    if check_venv_active; then
+        echo -e "${GREEN}Virtual environment activated successfully: $VIRTUAL_ENV${NC}"
+    else
+        echo -e "${RED}Error: Failed to activate virtual environment${NC}"
+        exit 1
+    fi
+fi
 
 # Check if .env file exists
 if [ ! -f ".env" ]; then

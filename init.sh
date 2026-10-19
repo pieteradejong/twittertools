@@ -1,4 +1,13 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# init.sh — one-time setup: Python 3.12 venv/ + pinned requirements, frontend, local database.
+# Needs the X API credentials in .env (or exported) before it will finish; it stops and says so.
+#
+#   ./init.sh          set up (reuses venv/ when its Python is 3.12)
+#   ./init.sh --help   this message
+cd "$(dirname "$0")" || exit 1
+case "${1:-}" in
+    -h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
 
 # Colors for output
 GREEN='\033[0;32m'

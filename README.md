@@ -113,6 +113,49 @@ The application will be available at:
 * Backend API: http://localhost:8000
 * API Documentation: http://localhost:8000/docs
 
+## Local archive database
+
+Every X archive export you drop into `archives/` (zip or unpacked) becomes a dated snapshot in
+`data/archive.db`. Nothing leaves your machine.
+
+```bash
+python -m src.archive_db build              # ingest new exports
+python -m src.archive_db changes            # followers gained/lost between snapshots
+python -m src.archive_db search 'sqlite'    # keyword search over everything you've liked
+./test.sh db                                # its test suite
+```
+
+The schema is created by `src/archive_db.py`; its module docstring describes the design.
+
+## Consolidating archive exports
+
+Each X export repeats most of the previous one, and X ships every export as a ~400 MB zip.
+`scripts/consolidate_archives.py` keeps `archives/` as **one folder per export with no duplicated
+content**, without losing a byte:
+
+```bash
+python scripts/consolidate_archives.py plan     # dry run: what would change, bytes saved
+python scripts/consolidate_archives.py apply    # do it; stops at the first failed check
+python scripts/consolidate_archives.py verify   # every file matches its original SHA-256
+./test.sh consolidate                           # its test suite (2 tests need ffmpeg)
+```
+
+```mermaid
+flowchart LR
+    Z["new export zip<br/>in archives/"] --> U["unzip to<br/>twitter-archive-YYYY-MM-DD/"]
+    U --> V{"folder matches zip?<br/>CRC-32 + size, every entry"}
+    V -- no --> STOP[abort, nothing deleted]
+    V -- yes --> H["checksums/&lt;export&gt;.sha256<br/>(originals, before dedup)"]
+    H --> N["re-stamped videos:<br/>header-only diff + equal ffmpeg streamhash<br/>→ patch in media-patches.json"]
+    N --> L["hardlink identical files,<br/>make them read-only"]
+    L --> C{"verify: all originals<br/>rebuild to their SHA-256?"}
+    C -- no --> STOP
+    C -- yes --> T[move zip to ~/.Trash]
+```
+
+Requires ffmpeg (`brew install ffmpeg`) for the video check; without it, near-duplicate videos are
+simply kept as separate files.
+
 ## Development
 
 ### Project Structure
@@ -377,6 +420,27 @@ The API documentation includes:
 * [ ] Advanced analytics dashboard
 * [ ] Data export capabilities
 
+## Account Categorization Data
+
+For categorizing accounts you follow into lists, the current data availability is limited:
+
+### Available Data (following accounts)
+* ✅ **User IDs**: All accounts have unique Twitter user IDs
+* ✅ **Intent URLs**: Links like `https://twitter.com/intent/user?user_id=123456789`
+* ✅ **Account Classifier**: Ready-to-use classification system with multiple methods
+
+### Missing Data (from Twitter archive)
+* ❌ **Profile Information**: No bios, usernames, display names, or locations
+* ❌ **Content Data**: No tweets or likes from followed accounts in your archive
+* ❌ **Engagement Data**: No interaction history or follower counts
+
+### Categorization Solutions
+1. **Profile Enrichment** (Recommended): Use the "Profile Enrichment" tab to fetch missing profile data via X API, then use the Account Classifier
+2. **Manual Categorization**: Create lists manually based on your knowledge
+3. **Content Analysis**: After enrichment, analyze bio text and tweet content for automatic categorization
+
+The Account Classifier supports multiple methods (profile-based, content-based, hybrid) but requires enriched profile data to be effective.
+
 ## Documentation
 
 * [`COMPREHENSIVE_X_API_GUIDE.md`](COMPREHENSIVE_X_API_GUIDE.md) - Complete guide to X API v2 implementation
@@ -417,9 +481,37 @@ The application uses a comprehensive logging system with the following features:
 
 Logs are stored in `logs/download.log` and can be used for debugging or monitoring the application's behavior.
 
+## Testing
+
+```bash
+./test.sh            # unit tests in tests/ — fast, offline, no credentials
+./test.sh archives   # archive-layout guards only
+./test.sh db         # archive.db tests only
+./test.sh consolidate # archive dedup tests only
+./test.sh all        # unit tests + legacy root-level test_*.py scripts
+./test.sh lint       # ruff + black --check (advisory, never fails the run)
+./test.sh ci         # unit tests + advisory lint
+./test.sh -k glob -x # extra args pass through to pytest
+```
+
+`tests/` is the maintained suite. The root-level `test_*.py` files predate it, are ad-hoc
+scripts with `__main__` blocks, and some need X API credentials or have unresolved relative
+imports — they are excluded from the default run and reachable via `./test.sh legacy`.
+
+`tests/test_archive_layout.py` guards the on-disk archive layout: that
+`archive_paths.latest_archive()` picks the newest export, that `enrich_likes.find_like_files()`
+actually finds it (this glob failed *silently* — loading zero likes and exiting 0 — when the
+archives moved), that no script hard-codes a dated export, and that archives stay gitignored.
+The checks that need real exports skip themselves when no `archives/` tree is present, so a
+fresh clone stays green.
+
 ## Local Twitter Archive Data Files
 
-The application now uses local data files from your Twitter archive (located in `twitter-archive-2025-05-31/data/`) as the primary data source. Below are the most relevant files and their purposes:
+The application now uses local data files from your Twitter archive (the newest export, `archives/twitter-archive-YYYY-MM-DD/data/`, picked by `scripts/archive_paths.py`) as the primary data source. Below are the most relevant files and their purposes:
+
+Archive exports live under `archives/` (gitignored — an X export contains DMs, IP audit logs and
+account details, and this repo is public), one folder per export after
+`scripts/consolidate_archives.py`.
 
 - `tweets.js`: All tweets posted by the account, including text, metadata, and references to media.
 - `like.js`: All tweets liked by the account.
@@ -439,7 +531,7 @@ The application now uses local data files from your Twitter archive (located in 
 - `tweetdeck.js`: TweetDeck-related data.
 - `moments_media/`, `tweets_media/`, `profile_media/`, etc.: Folders containing images, videos, and GIFs shared in tweets, DMs, or as profile media.
 
-For a full list and detailed descriptions, see the `twitter-archive-2025-05-31/data/README.txt` file in your archive.
+For a full list and detailed descriptions, see `data/README.txt` inside your export in your archive.
 
 ## Resetting and Reloading the Database
 
