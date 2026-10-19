@@ -3,7 +3,9 @@ import json
 from pathlib import Path
 import sqlite3
 
-data_dir = Path(__file__).parent.parent / 'twitter-archive-2025-05-31' / 'data'
+from archive_paths import latest_archive
+
+data_dir = latest_archive() / 'data'
 db_path = Path(__file__).parent.parent / 'data' / 'x_data.db'
 
 # List of relevant data files

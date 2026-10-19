@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 from datetime import datetime
 
+from archive_paths import latest_archive
+
 # Add the src directory to the path so we can import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -197,7 +199,7 @@ def main():
     """Main function."""
     # Default paths
     db_path = "data/x_data.db"
-    archive_path = "twitter-archive-2025-05-31"
+    archive_path = str(latest_archive())
     
     # Check if files exist
     if not os.path.exists(db_path):

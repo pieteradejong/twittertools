@@ -1,4 +1,4 @@
-# (DEPRECATED) This script is no longer used. All data is now loaded from local Twitter archive files in twitter-archive-2025-05-31/data/.
+# (DEPRECATED) This script is no longer used. All data is now loaded from local Twitter archive files in the newest archives/twitter-archive-*/data/.
 # API fetching is disabled to avoid rate limits and improve privacy.
 import json
 import sqlite3
