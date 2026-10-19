@@ -17,11 +17,16 @@ interface ListsListProps {
   isActive: boolean;
 }
 
+interface ListsResponse {
+  lists: TwitterList[];
+  total_count: number;
+}
+
 async function fetchLists(page: number = 0) {
   const limit = 20;
   const offset = page * limit;
-  const { data } = await axios.get<TwitterList[]>(`http://localhost:8000/api/lists?limit=${limit}&offset=${offset}`);
-  return data;
+  const { data } = await axios.get<ListsResponse>(`http://localhost:8000/api/lists?limit=${limit}&offset=${offset}`);
+  return data.lists;
 }
 
 async function runListEnrichment() {

@@ -10,11 +10,12 @@ class Settings(BaseSettings):
     """
     
     # ==================== Twitter API Credentials ====================
-    TWITTER_API_KEY: str
-    TWITTER_API_SECRET: str
-    TWITTER_ACCESS_TOKEN: str
-    TWITTER_ACCESS_TOKEN_SECRET: str
-    TWITTER_BEARER_TOKEN: str
+    # These are optional - app can run in local-only mode without API credentials
+    TWITTER_API_KEY: str = ""
+    TWITTER_API_SECRET: str = ""
+    TWITTER_ACCESS_TOKEN: str = ""
+    TWITTER_ACCESS_TOKEN_SECRET: str = ""
+    TWITTER_BEARER_TOKEN: str = ""
 
     # ==================== Application Settings ====================
     # Database Configuration
@@ -194,4 +195,13 @@ def is_feature_enabled(feature: str) -> bool:
         'real_time': settings.ENABLE_REAL_TIME_PROCESSING,
         'advanced_analytics': settings.ENABLE_ADVANCED_ANALYTICS,
     }
-    return feature_map.get(feature, False) 
+    return feature_map.get(feature, False)
+
+def has_twitter_credentials() -> bool:
+    """Check if Twitter API credentials are configured."""
+    settings = get_settings()
+    return bool(
+        settings.TWITTER_BEARER_TOKEN or 
+        (settings.TWITTER_API_KEY and settings.TWITTER_API_SECRET and 
+         settings.TWITTER_ACCESS_TOKEN and settings.TWITTER_ACCESS_TOKEN_SECRET)
+    ) 

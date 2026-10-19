@@ -194,6 +194,12 @@ class TwitterClient:
     def _initialize_clients(self):
         """Initialize both User Context and App-level Twitter clients."""
         settings = get_settings()
+        
+        # Check if credentials are available
+        if not settings.TWITTER_API_KEY or not settings.TWITTER_API_SECRET:
+            logger.warning("Twitter API credentials not configured. Running in local-only mode.")
+            return
+            
         try:
             # Initialize User Context client (OAuth 1.0a)
             logger.info("Initializing Twitter User Context client (OAuth 1.0a)...")
@@ -1315,31 +1321,76 @@ async def get_followers(
         raise HTTPException(status_code=500, detail=str(e))
 
 # List Members API Endpoints
+def extract_list_name_from_url(url: str, list_id: str) -> str:
+    """Extract a meaningful list name from Twitter list URL."""
+    if not url:
+        return f"List {list_id[-8:]}"
+    
+    # Extract the last part of the URL path
+    try:
+        # URLs look like: https://twitter.com/username/lists/list-identifier
+        path_parts = url.rstrip('/').split('/')
+        if len(path_parts) >= 2:
+            list_identifier = path_parts[-1]
+            
+            # If it's just a numeric ID, use the fallback
+            if list_identifier.isdigit():
+                return f"List {list_id[-8:]}"
+            
+            # Clean up the identifier to make it readable
+            # Handle cases like "eng-blogs", "3d-printing", "miamitechlife-65783", "health-tech-18169"
+            name = list_identifier
+            
+            # Remove trailing numbers and hyphens (like "-65783", "-18169")
+            # This regex removes any sequence of hyphens followed by numbers at the end
+            import re
+            name = re.sub(r'[-]\d+$', '', name)
+            
+            # Replace hyphens with spaces and underscores with spaces
+            name = name.replace('-', ' ').replace('_', ' ')
+            
+            # Title case each word
+            name = ' '.join(word.capitalize() for word in name.split())
+            
+            # Handle special cases
+            if name.lower().startswith('3d'):
+                name = '3D' + name[2:]
+            
+            return name if name else f"List {list_id[-8:]}"
+    except Exception:
+        pass
+    
+    return f"List {list_id[-8:]}"
+
 @app.get("/api/lists")
 async def get_lists(service: LocalTwitterService = Depends(get_local_twitter_service)):
     """Get all stored Twitter lists."""
     try:
         with sqlite3.connect(service.db_path) as conn:
             cursor = conn.execute("""
-                SELECT id, name, description, member_count, follower_count, 
-                       private, owner_id, created_at, fetched_at, last_updated
-                FROM twitter_lists 
+                SELECT id, name, url, type
+                FROM lists 
                 ORDER BY name
             """)
             
             lists = []
             for row in cursor.fetchall():
+                # Extract list name from URL if name is empty
+                list_name = row[1] or extract_list_name_from_url(row[2], row[0])
+                
                 lists.append({
                     "id": row[0],
-                    "name": row[1],
-                    "description": row[2],
-                    "member_count": row[3],
-                    "follower_count": row[4],
-                    "private": bool(row[5]),
-                    "owner_id": row[6],
-                    "created_at": row[7],
-                    "fetched_at": row[8],
-                    "last_updated": row[9]
+                    "name": list_name,
+                    "url": row[2],
+                    "type": row[3],
+                    "description": None,  # Not available in current schema
+                    "member_count": None,  # Not available in current schema
+                    "follower_count": None,  # Not available in current schema
+                    "private": None,  # Not available in current schema
+                    "owner_id": None,  # Not available in current schema
+                    "created_at": None,  # Not available in current schema
+                    "fetched_at": None,  # Not available in current schema
+                    "last_updated": None  # Not available in current schema
                 })
             
             return {
@@ -1358,9 +1409,8 @@ async def get_list_info(
     try:
         with sqlite3.connect(service.db_path) as conn:
             cursor = conn.execute("""
-                SELECT id, name, description, member_count, follower_count, 
-                       private, owner_id, created_at, fetched_at, last_updated
-                FROM twitter_lists 
+                SELECT id, name, url, type
+                FROM lists 
                 WHERE id = ?
             """, (list_id,))
             
@@ -1368,17 +1418,22 @@ async def get_list_info(
             if not row:
                 raise HTTPException(status_code=404, detail="List not found")
             
+            # Extract list name from URL if name is empty
+            list_name = row[1] or extract_list_name_from_url(row[2], row[0])
+            
             return {
                 "id": row[0],
-                "name": row[1],
-                "description": row[2],
-                "member_count": row[3],
-                "follower_count": row[4],
-                "private": bool(row[5]),
-                "owner_id": row[6],
-                "created_at": row[7],
-                "fetched_at": row[8],
-                "last_updated": row[9]
+                "name": list_name,
+                "url": row[2],
+                "type": row[3],
+                "description": None,  # Not available in current schema
+                "member_count": None,  # Not available in current schema
+                "follower_count": None,  # Not available in current schema
+                "private": None,  # Not available in current schema
+                "owner_id": None,  # Not available in current schema
+                "created_at": None,  # Not available in current schema
+                "fetched_at": None,  # Not available in current schema
+                "last_updated": None  # Not available in current schema
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1394,57 +1449,25 @@ async def get_list_members(
     try:
         with sqlite3.connect(service.db_path) as conn:
             # Check if list exists
-            cursor = conn.execute("SELECT name FROM twitter_lists WHERE id = ?", (list_id,))
+            cursor = conn.execute("SELECT name, url FROM lists WHERE id = ?", (list_id,))
             list_row = cursor.fetchone()
             if not list_row:
                 raise HTTPException(status_code=404, detail="List not found")
             
-            list_name = list_row[0]
+            list_name = list_row[0] or extract_list_name_from_url(list_row[1], list_id)
             
-            # Get members with pagination
-            cursor = conn.execute("""
-                SELECT user_id, username, name, description, profile_image_url,
-                       verified, protected, follower_count, following_count, tweet_count,
-                       created_at, location, url, fetched_at
-                FROM list_members 
-                WHERE list_id = ?
-                ORDER BY name
-                LIMIT ? OFFSET ?
-            """, (list_id, limit, offset))
-            
-            # Get total count
-            cursor_count = conn.execute("""
-                SELECT COUNT(*) FROM list_members WHERE list_id = ?
-            """, (list_id,))
-            total_count = cursor_count.fetchone()[0]
-            
-            members = []
-            for row in cursor.fetchall():
-                members.append({
-                    "id": row[0],
-                    "username": row[1],
-                    "display_name": row[2] or f"Twitter User {row[0][-8:]}",
-                    "description": row[3],
-                    "profile_image_url": row[4],
-                    "verified": bool(row[5]) if row[5] is not None else False,
-                    "protected": bool(row[6]) if row[6] is not None else False,
-                    "follower_count": row[7],
-                    "following_count": row[8],
-                    "tweet_count": row[9],
-                    "created_at": row[10],
-                    "location": row[11],
-                    "url": row[12],
-                    "fetched_at": row[13],
-                    "needs_profile_data": row[1] is None  # Indicate if profile needs enriching
-                })
+            # Note: List member data is not available in the current database schema
+            # The list_members table doesn't exist in the current archive format
             
             return {
                 "list_id": list_id,
                 "list_name": list_name,
-                "members": members,
-                "total_count": total_count,
+                "list_url": list_row[1],
+                "members": [],  # No member data available in current schema
+                "total_count": 0,
                 "limit": limit,
-                "offset": offset
+                "offset": offset,
+                "note": "List member data is not available in the current database schema. Use the fetch endpoint to retrieve members via API."
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
