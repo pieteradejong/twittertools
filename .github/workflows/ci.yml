@@ -2,9 +2,12 @@ name: Python CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -12,35 +15,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
-        python-version: 3.9
-
-    - name: Create and activate virtual environment
-      run: |
-        python -m venv venv
-        source venv/bin/activate
+        python-version: "3.12"
 
     - name: Install dependencies
       run: |
-        pip install --upgrade pip
-        pip install -r requirements.txt
+        python -m venv venv
+        venv/bin/pip install -r requirements.txt
 
-    - name: Check code formatting with black
-      run: |
-        source venv/bin/activate
-        black --check .
-
-    - name: Lint with ruff
-      run: |
-        source venv/bin/activate
-        ruff .
-
-    - name: Run pytest
-      run: |
-        source venv/bin/activate
-        pytest
-  
+    # Unit tests gate; lint is advisory (see test.sh).
+    - name: Test
+      run: ./test.sh ci

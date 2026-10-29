@@ -1,6 +1,6 @@
 # Twitter(X) Tools
 
-[![twittertools](https://github.com/pieteradejong/twittertools/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pieteradejong/twittertools/actions/workflows/ci.yml)
+[![twittertools](https://github.com/pieteradejong/twittertools/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/pieteradejong/twittertools/actions/workflows/ci.yml)
 
 A full-stack application for analyzing and managing Twitter/X data, featuring a Python FastAPI backend and React frontend.
 
